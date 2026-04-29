@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="DocuVox">
+  <rect width="512" height="512" fill="#0f3f85"/>
+  <circle cx="256" cy="256" r="190" fill="#1967d2" opacity="0.28"/>
+  <path d="M256 112c-44 0-78 34-78 78v82c0 44 34 78 78 78s78-34 78-78v-82c0-44-34-78-78-78Z" fill="#ffffff"/>
+  <path d="M140 258v18c0 64 52 116 116 116s116-52 116-116v-18" fill="none" stroke="#ffffff" stroke-width="36" stroke-linecap="round"/>
+  <path d="M256 392v52" fill="none" stroke="#ffffff" stroke-width="36" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,12 @@
+{
+  "name": "docuvox",
+  "version": "2.0.0",
+  "private": true,
+  "description": "DocuVox PWA test build for physiotherapy dictation.",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "build": "npm run check",
+    "check": "node --check app.js && node --check storage.js && node --check cloud-sync.js && node --check server.js"
+  }
+}
