@@ -1,10 +1,3 @@
-const sectionNames = [
-  "Befund aktuell",
-  "Behandlung",
-  "Reaktion / Verlauf",
-  "Ausblick / Empfehlung",
-];
-
 let state = loadState();
 let currentPatientId = null;
 let recognition = null;
@@ -14,6 +7,7 @@ let finalTranscript = "";
 const els = {
   allDocsText: document.querySelector("#allDocsText"),
   allDocsView: document.querySelector("#allDocsView"),
+  aiState: document.querySelector("#aiState"),
   backButton: document.querySelector("#backButton"),
   backFromAllButton: document.querySelector("#backFromAllButton"),
   copyAllButton: document.querySelector("#copyAllButton"),
@@ -210,8 +204,10 @@ function openPatient(patientId) {
   els.patientTitle.textContent = `Patient ${patient.id}`;
   els.patientPosition.textContent = `${patient.id} von ${state.patients.length}`;
   els.rawText.value = patient.rawText || "";
-  els.finalDoc.value = patient.documentation ? normalizeDisplayedDocumentation(patient.documentation, patient.id) : "";
+  els.finalDoc.value = patient.documentation || "";
   els.copyState.classList.toggle("hidden", !patient.documentation);
+  els.aiState.classList.toggle("hidden", !patient.documentation);
+  els.aiState.textContent = patient.documentation ? "KI aktiv" : "";
   els.errorState.classList.add("hidden");
   els.retryButton.classList.add("hidden");
   els.nextPatientButton.classList.toggle("hidden", !patient.documentation);
@@ -293,6 +289,8 @@ async function createDocumentation() {
   patient.documentation = documentation;
   patient.status = "done";
   els.finalDoc.value = documentation;
+  els.aiState.textContent = "KI aktiv";
+  els.aiState.classList.remove("hidden");
   els.copyState.classList.remove("hidden");
   els.errorState.classList.add("hidden");
   els.retryButton.classList.add("hidden");
@@ -331,12 +329,13 @@ async function copyAllDocs() {
 }
 
 async function createAiDocumentation(rawText, patientNumber) {
+  const patientLabel = `Patient ${patientNumber}`;
   const response = await fetch("/api/document", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ rawText, patientNumber }),
+    body: JSON.stringify({ text: rawText, patientLabel }),
   });
 
   const data = await response.json().catch(() => ({}));
@@ -360,6 +359,8 @@ function showAiError(message = "KI-Verarbeitung fehlgeschlagen. Bitte erneut ver
   els.errorState.textContent = message;
   els.errorState.classList.remove("hidden");
   els.retryButton.classList.remove("hidden");
+  els.aiState.textContent = "KI nicht aktiv";
+  els.aiState.classList.remove("hidden");
   els.copyState.classList.add("hidden");
   els.nextPatientButton.classList.add("hidden");
   toast("KI-Verarbeitung fehlgeschlagen. Bitte erneut versuchen.");
@@ -385,50 +386,8 @@ async function copyText(text, message) {
 function getAllDocsText() {
   return state.patients
     .filter((patient) => patient.documentation)
-    .map((patient) => normalizeDisplayedDocumentation(patient.documentation, patient.id))
+    .map((patient) => patient.documentation)
     .join("\n\n");
-}
-
-function normalizeDisplayedDocumentation(text, patientNumber) {
-  const sections = {
-    "Befund aktuell": extractDisplaySection(text, "Befund aktuell") || "Aktueller Befund aus Diktat nicht eindeutig ableitbar.",
-    Behandlung: extractDisplaySection(text, "Behandlung") || "Therapeutische Behandlung gemäss Diktat durchgeführt.",
-    "Reaktion / Verlauf": extractDisplaySection(text, "Reaktion / Verlauf") || "Behandlung wurde toleriert, weiterer Verlauf beobachten.",
-    "Ausblick / Empfehlung": extractDisplaySection(text, "Ausblick / Empfehlung") || "Weiterführung der Therapie mit Fokus auf Funktion, Sicherheit und Selbstständigkeit.",
-  };
-
-  return `Patient ${patientNumber}
-
-• Befund aktuell: ${ensureDisplayPeriod(sections["Befund aktuell"])}
-• Behandlung: ${ensureDisplayPeriod(sections.Behandlung)}
-• Reaktion / Verlauf: ${ensureDisplayPeriod(sections["Reaktion / Verlauf"])}
-• Ausblick / Empfehlung: ${ensureDisplayPeriod(sections["Ausblick / Empfehlung"])}`;
-}
-
-function extractDisplaySection(text, sectionName) {
-  const sectionOrder = [
-    "Befund aktuell",
-    "Behandlung",
-    "Reaktion / Verlauf",
-    "Ausblick / Empfehlung",
-  ];
-  const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const nextSections = sectionOrder
-    .filter((name) => name !== sectionName)
-    .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-    .join("|");
-  const pattern = new RegExp(`(?:•\\s*)?${escaped}\\s*:\\s*([\\s\\S]*?)(?=\\n\\s*(?:•\\s*)?(?:${nextSections})\\s*:|$)`, "i");
-  const match = String(text || "").match(pattern);
-
-  return (match?.[1] || "")
-    .replace(/^[-•\s]+/, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function ensureDisplayPeriod(text) {
-  const clean = String(text || "").trim();
-  return /[.!?]$/.test(clean) ? clean : `${clean}.`;
 }
 
 function getCurrentPatient() {

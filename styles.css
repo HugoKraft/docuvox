@@ -402,6 +402,7 @@ textarea:focus {
   }
 }
 
+.ai-state,
 .copy-state,
 .error-state {
   margin: 12px 0 2px;
@@ -411,6 +412,7 @@ textarea:focus {
   text-align: center;
 }
 
+.ai-state,
 .copy-state {
   color: var(--success);
   background: #eefbf7;

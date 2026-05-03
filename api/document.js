@@ -106,8 +106,9 @@ module.exports = async function documentHandler(request, response) {
 
   try {
     const body = await readJsonBody(request);
-    const rawText = String(body.rawText || "").trim();
-    const patientNumber = Number(body.patientNumber);
+    const rawText = String(body.text || body.rawText || "").trim();
+    const patientLabel = String(body.patientLabel || "").trim();
+    const patientNumber = extractPatientNumber(patientLabel || body.patientNumber);
 
     if (!rawText || !Number.isInteger(patientNumber) || patientNumber < 1) {
       sendJson(response, 400, {
@@ -298,6 +299,12 @@ function readJsonBody(request) {
     });
     request.on("error", reject);
   });
+}
+
+function extractPatientNumber(value) {
+  if (Number.isInteger(Number(value))) return Number(value);
+  const match = String(value || "").match(/\d+/);
+  return match ? Number(match[0]) : NaN;
 }
 
 function sendJson(response, statusCode, body) {
