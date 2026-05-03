@@ -1,132 +1,43 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="de">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0f3f85" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="DocuVox" />
-    <meta name="description" content="Schnelle Tages-Diktate für Physiotherapie." />
-    <title>DocuVox</title>
-    <link rel="manifest" href="manifest.webmanifest" />
-    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="icons/icon-192.png" />
-    <link rel="stylesheet" href="styles.css" />
-  </head>
-  <body>
-    <main class="app">
-      <header class="app-header">
-        <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24">
-            <path d="M12 3a4 4 0 0 0-4 4v5a4 4 0 0 0 8 0V7a4 4 0 0 0-4-4Z" />
-            <path d="M5 11v1a7 7 0 0 0 14 0v-1" />
-            <path d="M12 19v3" />
-          </svg>
-        </div>
-        <div>
-          <h1>DocuVox</h1>
-          <p>Tages-Diktate für Physiotherapie</p>
-        </div>
-      </header>
+<head>
+  <meta charset="UTF-8">
+  <title>DocuVox</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
 
-      <section class="view start-view" id="startView">
-        <div class="hero-card">
-          <p class="eyebrow">Tagesstart</p>
-          <h2>Wie viele Patienten behandelst du heute?</h2>
-          <form id="dayForm" class="day-form">
-            <div class="quick-picks" aria-label="Schnellwahl Patientenzahl">
-              <button type="button" data-count="6">6</button>
-              <button type="button" data-count="8">8</button>
-              <button type="button" data-count="10">10</button>
-              <button type="button" data-count="12">12</button>
-              <button type="button" data-count="15">15</button>
-              <button type="button" data-count="18">18</button>
-              <button type="button" data-count="20">20</button>
-              <button type="button" data-count="other">Andere</button>
-            </div>
-            <label class="field-label" for="patientCount">Optional andere Anzahl</label>
-            <input id="patientCount" type="number" min="1" max="80" inputmode="numeric" placeholder="z. B. 13" required />
-            <button class="primary-button" type="submit">Tagesliste erstellen</button>
-          </form>
-        </div>
-      </section>
+<div class="container">
+  <h1>DocuVox</h1>
 
-      <section class="view hidden" id="listView">
-        <div class="section-top">
-          <div>
-            <p class="eyebrow">Tagesliste</p>
-            <h2 id="dayTitle">Patienten heute</h2>
-          </div>
-          <button class="primary-button compact-button" id="copyAllTopButton" type="button">Alle kopieren</button>
-        </div>
-        <div class="progress-card">
-          <div class="progress-label">
-            <strong id="progressText">Heute 0 / 0 erledigt</strong>
-          </div>
-          <div class="progress-track" aria-hidden="true">
-            <span id="progressBar"></span>
-          </div>
-        </div>
-        <div class="patient-grid" id="patientGrid"></div>
-        <button class="secondary-button wide-button" id="showAllButton" type="button">Alle Dokumentationen anzeigen</button>
-        <button class="text-button" id="newDayButton" type="button">Neue Tagesliste erstellen</button>
-      </section>
+  <textarea id="rawText" placeholder="Diktat..."></textarea>
 
-      <section class="view hidden" id="detailView">
-        <div class="section-top">
-          <div>
-            <p class="eyebrow">Diktat</p>
-            <h2 id="patientTitle">Patient 1</h2>
-            <p class="patient-position" id="patientPosition">1 von 1</p>
-          </div>
-          <button class="secondary-button" id="backButton" type="button">Zurück zur Tagesliste</button>
-        </div>
+  <button onclick="generate()">Dokumentation erstellen</button>
 
-        <div class="dictation-card">
-          <button class="mic-button" id="startDictationButton" type="button" aria-label="Diktat starten">
-            <span class="mic-ring"></span>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 3a4 4 0 0 0-4 4v5a4 4 0 0 0 8 0V7a4 4 0 0 0-4-4Z" />
-              <path d="M5 11v1a7 7 0 0 0 14 0v-1" />
-              <path d="M12 19v3" />
-            </svg>
-            <strong>Diktat starten</strong>
-          </button>
-          <button class="stop-button hidden" id="stopDictationButton" type="button">Diktat stoppen</button>
-          <p id="speechStatus">Spracheingabe wird geprüft...</p>
-        </div>
+  <h2>Ergebnis:</h2>
+  <pre id="output"></pre>
+</div>
 
-        <div class="edit-panel hidden" id="editPanel">
-          <label class="field-label" for="rawText">Rohdiktat</label>
-          <textarea id="rawText" rows="7" placeholder="Diktat erscheint hier. Du kannst den Text auch direkt eintippen."></textarea>
-          <button class="primary-button wide-button" id="createDocButton" type="button">Doku erstellen und kopieren</button>
-        </div>
+<script>
+async function generate() {
+  const text = document.getElementById("rawText").value;
 
-        <div class="copy-state hidden" id="copyState">✅ Text kopiert</div>
-        <label class="field-label" for="finalDoc">Fertige Dokumentation</label>
-        <textarea id="finalDoc" rows="10" readonly placeholder="Nach dem Stoppen erscheint hier automatisch die fertige Dokumentation."></textarea>
+  const res = await fetch("/api/document", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      text: text,
+      patientLabel: "Patient X"
+    }),
+  });
 
-        <button class="primary-button wide-button hidden" id="nextPatientButton" type="button">Weiter zu Patient 2</button>
-        <button class="link-button" id="editButton" type="button">Bearbeiten</button>
-      </section>
+  const data = await res.json();
 
-      <section class="view hidden" id="allDocsView">
-        <div class="section-top">
-          <div>
-            <p class="eyebrow">Tagesende</p>
-            <h2>Alle Dokumentationen</h2>
-          </div>
-          <button class="secondary-button" id="backFromAllButton" type="button">Zurück zur Tagesliste</button>
-        </div>
-        <div class="all-docs" id="allDocsText"></div>
-        <button class="primary-button wide-button" id="copyAllButton" type="button">Alle Dokumentationen kopieren</button>
-      </section>
-    </main>
+  document.getElementById("output").textContent = data.documentation;
+}
+</script>
 
-    <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="cloud-sync.js"></script>
-    <script src="storage.js"></script>
-    <script src="app.js"></script>
-  </body>
+</body>
 </html>
