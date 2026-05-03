@@ -1,101 +1,138 @@
-let state = loadState();
-let currentPatientId = null;
-let recognition = null;
-let isRecording = false;
-let finalTranscript = "";
-
-const els = {
-  allDocsText: document.querySelector("#allDocsText"),
-  allDocsView: document.querySelector("#allDocsView"),
-  aiState: document.querySelector("#aiState"),
-  backButton: document.querySelector("#backButton"),
-  backFromAllButton: document.querySelector("#backFromAllButton"),
-  copyAllButton: document.querySelector("#copyAllButton"),
-  copyAllTopButton: document.querySelector("#copyAllTopButton"),
-  copyState: document.querySelector("#copyState"),
-  createDocButton: document.querySelector("#createDocButton"),
-  dayForm: document.querySelector("#dayForm"),
-  dayTitle: document.querySelector("#dayTitle"),
-  detailView: document.querySelector("#detailView"),
-  editButton: document.querySelector("#editButton"),
-  editPanel: document.querySelector("#editPanel"),
-  errorState: document.querySelector("#errorState"),
-  finalDoc: document.querySelector("#finalDoc"),
-  listView: document.querySelector("#listView"),
-  newDayButton: document.querySelector("#newDayButton"),
-  nextPatientButton: document.querySelector("#nextPatientButton"),
-  patientCount: document.querySelector("#patientCount"),
-  patientGrid: document.querySelector("#patientGrid"),
-  patientPosition: document.querySelector("#patientPosition"),
-  patientTitle: document.querySelector("#patientTitle"),
-  progressBar: document.querySelector("#progressBar"),
-  progressText: document.querySelector("#progressText"),
-  rawText: document.querySelector("#rawText"),
-  retryButton: document.querySelector("#retryButton"),
-  showAllButton: document.querySelector("#showAllButton"),
-  speechStatus: document.querySelector("#speechStatus"),
-  startDictationButton: document.querySelector("#startDictationButton"),
-  startView: document.querySelector("#startView"),
-  stopDictationButton: document.querySelector("#stopDictationButton"),
-  toast: document.querySelector("#toast"),
-};
-
-initSpeech();
-bindEvents();
-registerServiceWorker();
-renderInitialView();
-
-function bindEvents() {
-  els.dayForm.addEventListener("submit", createDayList);
-  document.querySelectorAll("[data-count]").forEach((button) => {
-    button.addEventListener("click", () => pickCount(button));
-  });
-  els.newDayButton.addEventListener("click", resetDay);
-  els.backButton.addEventListener("click", showList);
-  els.backFromAllButton.addEventListener("click", showList);
-  els.showAllButton.addEventListener("click", showAllDocs);
-  els.copyAllButton.addEventListener("click", copyAllDocs);
-  els.copyAllTopButton.addEventListener("click", copyAllDocs);
-  els.startDictationButton.addEventListener("click", startDictation);
-  els.stopDictationButton.addEventListener("click", stopDictation);
-  els.createDocButton.addEventListener("click", createDocumentation);
-  els.retryButton.addEventListener("click", createDocumentation);
-  els.nextPatientButton.addEventListener("click", goToNextPatient);
-  els.editButton.addEventListener("click", toggleEdit);
-  els.rawText.addEventListener("input", saveCurrentRawText);
+  await copyText(documentation, "Dokumentation kopiert.");
 }
 
-function initSpeech() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-  if (!SpeechRecognition) {
-    els.speechStatus.textContent = "Spracheingabe nicht verfügbar. Text kann über Bearbeiten eingetippt werden.";
-    els.startDictationButton.disabled = true;
+function goToNextPatient() {
+  const next = state.patients.find((patient) => patient.id > currentPatientId && !patient.documentation);
+  if (next) {
+    openPatient(next.id);
     return;
   }
+  showList();
+}
 
-  recognition = new SpeechRecognition();
-  recognition.lang = "de-CH";
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  els.speechStatus.textContent = "Bereit für Spracheingabe.";
+function updateNextButton() {
+  const next = state.patients.find((patient) => patient.id > currentPatientId && !patient.documentation);
+  els.nextPatientButton.textContent = next ? `Weiter zu Patient ${next.id}` : "Zurück zur Tagesliste";
+}
 
-  recognition.onresult = (event) => {
-    let interimTranscript = "";
-    for (let index = event.resultIndex; index < event.results.length; index += 1) {
-      const transcript = event.results[index][0].transcript.trim();
-      if (event.results[index].isFinal) {
-        finalTranscript += `${transcript} `;
-      } else {
-        interimTranscript += transcript;
-      }
-    }
-    els.rawText.value = `${finalTranscript}${interimTranscript}`.trim();
-    saveCurrentRawText();
-  };
+function toggleEdit() {
+  els.editPanel.classList.toggle("hidden");
+}
 
-  recognition.onerror = () => {
-    setRecordingState(false);
-    toast("Diktat wurde unterbrochen.");
-  };
-  
+async function copyAllDocs() {
+  const text = getAllDocsText();
+  if (!text) {
+    toast("Noch keine fertigen Dokumentationen vorhanden.");
+    return;
+  }
+  await copyText(text, "Alle Dokumentationen kopiert.");
+}
+
+async function createAiDocumentation(rawText, patientNumber) {
+  const patientLabel = `Patient ${patientNumber}`;
+  const response = await fetch("/api/document", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ text: rawText, patientLabel }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.documentation) {
+    const details = data.details ? ` ${data.details}` : "";
+    throw new Error(`${data.error || "KI-Verarbeitung fehlgeschlagen. Bitte erneut versuchen."}${details}`);
+  }
+
+  return data.documentation.trim();
+}
+
+function setProcessingState(active) {
+  els.createDocButton.disabled = active;
+  els.retryButton.disabled = active;
+  els.stopDictationButton.disabled = active;
+  els.startDictationButton.disabled = active;
+  els.speechStatus.textContent = active ? "KI verarbeitet das Diktat..." : "Bereit für Spracheingabe.";
+}
+
+function showAiError(message = "KI-Verarbeitung fehlgeschlagen. Bitte erneut versuchen.") {
+  els.errorState.textContent = message;
+  els.errorState.classList.remove("hidden");
+  els.retryButton.classList.remove("hidden");
+  els.aiState.textContent = "KI nicht aktiv";
+  els.aiState.classList.remove("hidden");
+  els.copyState.classList.add("hidden");
+  els.nextPatientButton.classList.add("hidden");
+  toast("KI-Verarbeitung fehlgeschlagen. Bitte erneut versuchen.");
+}
+
+async function copyText(text, message) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(message);
+  } catch {
+    const helper = document.createElement("textarea");
+    helper.value = text;
+    helper.style.position = "fixed";
+    helper.style.opacity = "0";
+    document.body.append(helper);
+    helper.select();
+    const copied = document.execCommand("copy");
+    helper.remove();
+    toast(copied ? message : "Kopieren ist in diesem Browser nicht erlaubt.");
+  }
+}
+
+function getAllDocsText() {
+  return state.patients
+    .filter((patient) => patient.documentation)
+    .map((patient) => patient.documentation)
+    .join("\n\n");
+}
+
+function getCurrentPatient() {
+  return state.patients.find((patient) => patient.id === currentPatientId);
+}
+
+function showView(view) {
+  els.startView.classList.toggle("hidden", view !== "start");
+  els.listView.classList.toggle("hidden", view !== "list");
+  els.detailView.classList.toggle("hidden", view !== "detail");
+  els.allDocsView.classList.toggle("hidden", view !== "all");
+}
+
+function loadState() {
+  return window.docuVoxStorage.loadDayState(createEmptyState);
+}
+
+function saveState() {
+  window.docuVoxStorage.saveDayState(state);
+}
+
+function createEmptyState() {
+  return { date: today(), activePatientId: null, patients: [] };
+}
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function toast(message) {
+  els.toast.textContent = message;
+  els.toast.classList.add("visible");
+  window.clearTimeout(toast.timeout);
+  toast.timeout = window.setTimeout(() => {
+    els.toast.classList.remove("visible");
+  }, 2200);
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  if (!window.isSecureContext) return;
+
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      // PWA registration is best-effort in local test mode.
+    });
+  });
+}
