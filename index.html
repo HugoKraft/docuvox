@@ -81,12 +81,14 @@
         <div class="dictation-card">
           <button class="mic-button" id="startDictationButton" type="button" aria-label="Diktat starten">
             <span class="mic-ring"></span>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 3a4 4 0 0 0-4 4v5a4 4 0 0 0 8 0V7a4 4 0 0 0-4-4Z" />
-              <path d="M5 11v1a7 7 0 0 0 14 0v-1" />
-              <path d="M12 19v3" />
-            </svg>
-            <strong>Diktat starten</strong>
+            <span class="mic-core">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3a4 4 0 0 0-4 4v5a4 4 0 0 0 8 0V7a4 4 0 0 0-4-4Z" />
+                <path d="M5 11v1a7 7 0 0 0 14 0v-1" />
+                <path d="M12 19v3" />
+              </svg>
+            </span>
+            <strong class="mic-label">Diktat starten</strong>
           </button>
           <button class="stop-button hidden" id="stopDictationButton" type="button">Diktat stoppen</button>
           <p id="speechStatus">Spracheingabe wird geprüft...</p>
