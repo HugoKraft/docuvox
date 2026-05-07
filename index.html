@@ -5,9 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0f3f85" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="DocuVox" />
-    <meta name="description" content="Schnelle Tages-Diktate für Physiotherapie." />
+    <meta name="description" content="Schnelle KI-Dokumentation für Physiotherapie." />
     <title>DocuVox</title>
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
@@ -26,11 +25,11 @@
         </div>
         <div>
           <h1>DocuVox</h1>
-          <p>Tages-Diktate für Physiotherapie</p>
+          <p>KI-Diktate für Physiotherapie</p>
         </div>
       </header>
 
-      <section class="view start-view" id="startView">
+      <section class="view" id="startView">
         <div class="hero-card">
           <p class="eyebrow">Tagesstart</p>
           <h2>Wie viele Patienten behandelst du heute?</h2>
@@ -61,12 +60,8 @@
           <button class="primary-button compact-button" id="copyAllTopButton" type="button">Alle kopieren</button>
         </div>
         <div class="progress-card">
-          <div class="progress-label">
-            <strong id="progressText">Heute 0 / 0 erledigt</strong>
-          </div>
-          <div class="progress-track" aria-hidden="true">
-            <span id="progressBar"></span>
-          </div>
+          <strong id="progressText">Heute 0 / 0 erledigt</strong>
+          <div class="progress-track" aria-hidden="true"><span id="progressBar"></span></div>
         </div>
         <div class="patient-grid" id="patientGrid"></div>
         <button class="secondary-button wide-button" id="showAllButton" type="button">Alle Dokumentationen anzeigen</button>
@@ -86,12 +81,14 @@
         <div class="dictation-card">
           <button class="mic-button" id="startDictationButton" type="button" aria-label="Diktat starten">
             <span class="mic-ring"></span>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 3a4 4 0 0 0-4 4v5a4 4 0 0 0 8 0V7a4 4 0 0 0-4-4Z" />
-              <path d="M5 11v1a7 7 0 0 0 14 0v-1" />
-              <path d="M12 19v3" />
-            </svg>
-            <strong>Diktat starten</strong>
+            <span class="mic-core">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3a4 4 0 0 0-4 4v5a4 4 0 0 0 8 0V7a4 4 0 0 0-4-4Z" />
+                <path d="M5 11v1a7 7 0 0 0 14 0v-1" />
+                <path d="M12 19v3" />
+              </svg>
+            </span>
+            <strong class="mic-label">Diktat starten</strong>
           </button>
           <button class="stop-button hidden" id="stopDictationButton" type="button">Diktat stoppen</button>
           <p id="speechStatus">Spracheingabe wird geprüft...</p>
@@ -103,14 +100,15 @@
           <button class="primary-button wide-button" id="createDocButton" type="button">Doku erstellen und kopieren</button>
         </div>
 
-        <div class="error-state hidden" id="errorState">KI-Verarbeitung fehlgeschlagen. Bitte erneut versuchen.</div>
+        <div class="error-state hidden" id="errorState">KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.</div>
         <button class="secondary-button wide-button hidden" id="retryButton" type="button">Erneut verarbeiten</button>
         <div class="ai-state hidden" id="aiState">KI aktiv</div>
         <div class="copy-state hidden" id="copyState">✅ Text kopiert</div>
-        <label class="field-label" for="finalDoc">Fertige Dokumentation</label>
-        <textarea id="finalDoc" rows="10" readonly placeholder="Nach dem Stoppen erscheint hier automatisch die fertige Dokumentation."></textarea>
 
-        <button class="primary-button wide-button hidden" id="nextPatientButton" type="button">Weiter zu Patient 2</button>
+        <label class="field-label" for="finalDoc">Fertige Dokumentation</label>
+        <textarea id="finalDoc" rows="10" readonly placeholder="Nach dem Stoppen erscheint hier die KI-Dokumentation."></textarea>
+
+        <button class="primary-button wide-button hidden" id="nextPatientButton" type="button">Weiter</button>
         <button class="link-button" id="editButton" type="button">Bearbeiten</button>
       </section>
 
@@ -128,8 +126,6 @@
     </main>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="cloud-sync.js"></script>
-    <script src="storage.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

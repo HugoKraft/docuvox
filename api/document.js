@@ -1,11 +1,13 @@
 const OPENAI_API_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-4.1";
+
 const SECTION_ORDER = [
   "Befund aktuell",
   "Behandlung",
   "Reaktion / Verlauf",
   "Ausblick / Empfehlung",
 ];
+
 const SECTION_DEFAULTS = {
   "Befund aktuell": "Aktueller Befund aus Diktat nicht eindeutig ableitbar.",
   Behandlung: "Therapeutische Behandlung gemäss Diktat durchgeführt.",
@@ -24,6 +26,7 @@ WICHTIG:
 - Verwende medizinische Sprache.
 - Interpretiere den aktuellen Befund aktiv aus dem Diktat.
 - Übernimm den Rohtext niemals direkt.
+- Anonymisiere Patientennamen.
 
 STRUKTUR:
 Du musst IMMER exakt diese 4 Punkte ausgeben:
@@ -33,114 +36,79 @@ Du musst IMMER exakt diese 4 Punkte ausgeben:
 • Reaktion / Verlauf:
 • Ausblick / Empfehlung:
 
-INHALTLICHE VORGABEN:
-• Befund aktuell:
-- Beschreibe den aktuellen Zustand, Diagnose, Einschränkungen und Symptome.
-- Leite den Befund aktiv aus dem Diktat ab.
-
-• Behandlung:
-- Beschreibe konkret die durchgeführten Massnahmen.
-- Nenne Training, Gehen, Übungen, Hilfsmittel, Wiederholungen oder relevante Parameter.
-
-• Reaktion / Verlauf:
-- Beurteile, wie der Patient reagiert hat.
-- Nenne Toleranz, Unsicherheit, Fortschritt, Probleme oder Belastbarkeit.
-
-• Ausblick / Empfehlung:
-- Formuliere nächste Schritte.
-- Nenne Weiterführung, Fokus und therapeutisches Ziel.
-
 REGELN:
 - Jeder Abschnitt MUSS gefüllt sein.
-- Wenn Infos fehlen, ergänze medizinisch sinnvoll.
+- Wenn Informationen fehlen, ergänze medizinisch sinnvoll.
 - Maximal 2 bis 3 kurze Sätze pro Abschnitt.
-- KEIN Rohtext übernehmen.
-- Patientennamen anonymisieren.
-- Schreibe sachlich, kurz und therapiebezogen.
+- Kein Fließtext ohne Struktur.
+- Gib ausschließlich das Ausgabeformat zurück.
 
 AUSGABEFORMAT:
-Gib ausschließlich dieses Format zurück:
 
 Patient X
 
 • Befund aktuell: ...
 • Behandlung: ...
 • Reaktion / Verlauf: ...
-• Ausblick / Empfehlung: ...
-
-BEISPIEL:
-Eingabe:
-"Patient mit Parkinson, wir sind am Rollator gegangen, Fokus auf Schrittgrösse, er war unsicher aber ging"
-
-Ausgabe:
-
-Patient X
-
-• Befund aktuell: Patient mit Parkinson, Gangbild reduziert mit verminderter Schrittlänge und Unsicherheiten.
-• Behandlung: Gangtraining am Rollator mit Fokus auf Schrittlängenvergrösserung und Stabilität.
-• Reaktion / Verlauf: Belastung toleriert, jedoch weiterhin Unsicherheiten im Gangbild.
-• Ausblick / Empfehlung: Weiterführung des Gangtrainings mit Fokus auf Schrittlänge, Sicherheit und Gleichgewicht.`;
+• Ausblick / Empfehlung: ...`;
 
 const REPAIR_PROMPT = `${SYSTEM_PROMPT}
 
 Zusatzauftrag:
-Die vorherige Antwort war leer, unvollständig oder nicht im Pflichtformat. Erstelle sie jetzt neu.
-Alle vier Abschnitte müssen vorhanden und ausgefüllt sein.
-Falls Informationen fehlen, ergänze fachlich kurz und plausibel.
-Gib ausschließlich das Pflichtformat aus.`;
+Die vorherige Antwort war leer, unvollständig oder nicht exakt im Pflichtformat.
+Erstelle sie neu.
+Alle vier Abschnitte müssen vorhanden und ausgefüllt sein.`;
 
-module.exports = async function documentHandler(request, response) {
+module.exports = async function handler(request, response) {
   if (request.method !== "POST") {
-    sendJson(response, 405, { error: "Method not allowed" });
-    return;
+    return sendJson(response, 405, { error: "Method not allowed" });
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    sendJson(response, 500, {
-      error: "KI-Verarbeitung fehlgeschlagen. Bitte erneut versuchen.",
+    return sendJson(response, 500, {
+      error: "KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.",
       details: "OPENAI_API_KEY ist nicht gesetzt.",
     });
-    return;
   }
 
   try {
     const body = await readJsonBody(request);
-    const rawText = String(body.text || body.rawText || "").trim();
+    const text = String(body.text || "").trim();
     const patientLabel = String(body.patientLabel || "").trim();
-    const patientNumber = extractPatientNumber(patientLabel || body.patientNumber);
+    const patientNumber = extractPatientNumber(patientLabel);
 
-    if (!rawText || !Number.isInteger(patientNumber) || patientNumber < 1) {
-      sendJson(response, 400, {
-        error: "KI-Verarbeitung fehlgeschlagen. Bitte erneut versuchen.",
-        details: "Rohdiktat oder Patientennummer fehlt.",
+    if (!text || !patientLabel || !Number.isInteger(patientNumber)) {
+      return sendJson(response, 400, {
+        error: "KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.",
+        details: "Body muss text und patientLabel enthalten.",
       });
-      return;
     }
 
     const documentation = await createDocumentation({
       apiKey,
-      rawText,
+      text,
+      patientLabel: `Patient ${patientNumber}`,
       patientNumber,
     });
 
-    sendJson(response, 200, { documentation });
+    return sendJson(response, 200, { documentation });
   } catch (error) {
     console.error("DocuVox AI processing failed:", error);
-    sendJson(response, 500, {
-      error: "KI-Verarbeitung fehlgeschlagen. Bitte erneut versuchen.",
+    return sendJson(response, 500, {
+      error: "KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.",
       details: error.message || "OpenAI-Anfrage fehlgeschlagen.",
     });
   }
 };
 
-async function createDocumentation({ apiKey, rawText, patientNumber }) {
+async function createDocumentation({ apiKey, text, patientLabel, patientNumber }) {
   const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
   const first = await requestOpenAi({
     apiKey,
     model,
-    instructions: SYSTEM_PROMPT.replaceAll("Patient X", `Patient ${patientNumber}`),
-    input: createUserInput(rawText, patientNumber),
+    instructions: SYSTEM_PROMPT.replaceAll("Patient X", patientLabel),
+    input: createUserInput(text, patientLabel),
   });
 
   if (hasCompleteSections(first)) {
@@ -150,8 +118,8 @@ async function createDocumentation({ apiKey, rawText, patientNumber }) {
   const repaired = await requestOpenAi({
     apiKey,
     model,
-    instructions: REPAIR_PROMPT.replaceAll("Patient X", `Patient ${patientNumber}`),
-    input: `${createUserInput(rawText, patientNumber)}\n\nUnvollständige vorherige Antwort:\n${first}`,
+    instructions: REPAIR_PROMPT.replaceAll("Patient X", patientLabel),
+    input: `${createUserInput(text, patientLabel)}\n\nUnvollständige vorherige Antwort:\n${first}`,
   });
 
   return normalizeDocumentation(repaired, patientNumber);
@@ -169,7 +137,7 @@ async function requestOpenAi({ apiKey, model, instructions, input }) {
     requestBody.reasoning = { effort: "low" };
   }
 
-  const response = await fetch(OPENAI_API_URL, {
+  const openAiResponse = await fetch(OPENAI_API_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -178,24 +146,24 @@ async function requestOpenAi({ apiKey, model, instructions, input }) {
     body: JSON.stringify(requestBody),
   });
 
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.error?.message || `OpenAI request failed with ${response.status}`);
+  const data = await openAiResponse.json().catch(() => ({}));
+  if (!openAiResponse.ok) {
+    throw new Error(data.error?.message || `OpenAI request failed with ${openAiResponse.status}`);
   }
 
-  const text = extractOutputText(data).trim();
-  if (!text) {
+  const outputText = extractOutputText(data).trim();
+  if (!outputText) {
     throw new Error("OpenAI returned an empty documentation");
   }
 
-  return text;
+  return outputText;
 }
 
-function createUserInput(rawText, patientNumber) {
-  return `Patient: Patient ${patientNumber}
+function createUserInput(text, patientLabel) {
+  return `Patient: ${patientLabel}
 
 Rohdiktat:
-${rawText}
+${text}
 
 Aufgabe:
 Erstelle daraus eine professionelle, kurze Physiotherapie-Dokumentation im Pflichtformat.
@@ -203,7 +171,7 @@ Schreibe nicht wie gesprochen.
 Verdichte den Inhalt fachlich.
 Leite Befund, Reaktion und Ausblick therapeutisch sinnvoll ab.
 Übernimm keine Patientennamen.
-Übernimm das Rohdiktat nicht wortwörtlich und nicht im Satzbau des Diktats.
+Übernimm das Rohdiktat nicht wortwörtlich.
 Fülle alle vier Abschnitte aus.`;
 }
 
@@ -217,51 +185,41 @@ function extractOutputText(data) {
 }
 
 function normalizeDocumentation(text, patientNumber) {
-  let clean = text
-    .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .trim();
-
   const sections = Object.fromEntries(
-    SECTION_ORDER.map((section) => [section, extractSection(clean, section)])
+    SECTION_ORDER.map((section) => [section, extractSection(text, section)])
   );
 
-  return formatDocumentation(sections, patientNumber);
+  return `Patient ${patientNumber}
+
+• Befund aktuell: ${ensureText(sections["Befund aktuell"], SECTION_DEFAULTS["Befund aktuell"])}
+• Behandlung: ${ensureText(sections.Behandlung, SECTION_DEFAULTS.Behandlung)}
+• Reaktion / Verlauf: ${ensureText(sections["Reaktion / Verlauf"], SECTION_DEFAULTS["Reaktion / Verlauf"])}
+• Ausblick / Empfehlung: ${ensureText(sections["Ausblick / Empfehlung"], SECTION_DEFAULTS["Ausblick / Empfehlung"])}`;
 }
 
 function extractSection(text, sectionName) {
-  const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = escapeRegExp(sectionName);
   const nextSections = SECTION_ORDER
     .filter((name) => name !== sectionName)
-    .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .map(escapeRegExp)
     .join("|");
-
   const pattern = new RegExp(`(?:•\\s*)?${escaped}\\s*:\\s*([\\s\\S]*?)(?=\\n\\s*(?:•\\s*)?(?:${nextSections})\\s*:|$)`, "i");
-  const match = text.match(pattern);
+  const match = String(text || "").match(pattern);
+
   return sanitizeSection(match?.[1] || "");
 }
 
 function sanitizeSection(value) {
-  return value
+  return String(value || "")
     .replace(/^[-•\s]+/, "")
-    .replace(/\s+/g, " ")
     .replace(/\b(wir haben dann|also|eben|eigentlich|quasi|sozusagen)\b/gi, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function formatDocumentation(sections, patientNumber) {
-  return `Patient ${patientNumber}
-
-• Befund aktuell: ${ensureUseful(sections["Befund aktuell"], SECTION_DEFAULTS["Befund aktuell"])}
-• Behandlung: ${ensureUseful(sections.Behandlung, SECTION_DEFAULTS.Behandlung)}
-• Reaktion / Verlauf: ${ensureUseful(sections["Reaktion / Verlauf"], SECTION_DEFAULTS["Reaktion / Verlauf"])}
-• Ausblick / Empfehlung: ${ensureUseful(sections["Ausblick / Empfehlung"], SECTION_DEFAULTS["Ausblick / Empfehlung"])}`;
-}
-
-function ensureUseful(value, fallback) {
+function ensureText(value, fallback) {
   const clean = sanitizeSection(value);
-  if (!clean || clean.length < 4 || clean === "...") return fallback;
+  if (!clean || clean === "..." || clean.length < 4) return fallback;
   return /[.!?]$/.test(clean) ? clean : `${clean}.`;
 }
 
@@ -272,14 +230,18 @@ function hasCompleteSections(text) {
   });
 }
 
-function readJsonBody(request) {
-  if (request.body && typeof request.body === "object") {
-    return Promise.resolve(request.body);
-  }
+function extractPatientNumber(patientLabel) {
+  const match = String(patientLabel || "").match(/\d+/);
+  return match ? Number(match[0]) : NaN;
+}
 
-  if (typeof request.body === "string") {
-    return Promise.resolve(JSON.parse(request.body || "{}"));
-  }
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function readJsonBody(request) {
+  if (request.body && typeof request.body === "object") return request.body;
+  if (typeof request.body === "string") return JSON.parse(request.body || "{}");
 
   return new Promise((resolve, reject) => {
     let raw = "";
@@ -301,12 +263,6 @@ function readJsonBody(request) {
   });
 }
 
-function extractPatientNumber(value) {
-  if (Number.isInteger(Number(value))) return Number(value);
-  const match = String(value || "").match(/\d+/);
-  return match ? Number(match[0]) : NaN;
-}
-
 function sendJson(response, statusCode, body) {
   response.writeHead(statusCode, {
     "Content-Type": "application/json;charset=utf-8",
@@ -314,7 +270,3 @@ function sendJson(response, statusCode, body) {
   });
   response.end(JSON.stringify(body));
 }
-
-module.exports._test = {
-  normalizeDocumentation,
-};
