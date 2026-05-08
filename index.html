@@ -75,7 +75,6 @@
             <h2 id="patientTitle">Patient 1</h2>
             <p class="patient-position" id="patientPosition">1 von 1</p>
           </div>
-          <button class="secondary-button" id="backButton" type="button">Zurück zur Tagesliste</button>
         </div>
 
         <div class="dictation-card">
@@ -110,14 +109,16 @@
           <p class="doc-placeholder">Nach dem Stoppen erscheint hier die KI-Dokumentation.</p>
         </div>
 
-        <button class="link-button" id="editButton" type="button">Bearbeiten</button>
-        <button class="copy-button wide-button hidden" id="copyDocButton" type="button">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <rect x="9" y="9" width="11" height="11" rx="2" />
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-          </svg>
-          <span>Dokumentation kopieren</span>
-        </button>
+        <div class="detail-action-row">
+          <button class="secondary-button detail-action-button" id="editButton" type="button">Bearbeiten</button>
+          <button class="copy-button detail-action-button hidden" id="copyDocButton" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="9" y="9" width="11" height="11" rx="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+            <span>Dokumentation kopieren</span>
+          </button>
+        </div>
         <button class="primary-button wide-button hidden" id="nextPatientButton" type="button">Weiter</button>
         <button class="secondary-button wide-button" id="backBottomButton" type="button">Zur Tagesübersicht</button>
       </section>
