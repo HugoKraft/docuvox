@@ -102,14 +102,24 @@
 
         <div class="error-state hidden" id="errorState">KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.</div>
         <button class="secondary-button wide-button hidden" id="retryButton" type="button">Erneut verarbeiten</button>
-        <div class="ai-state hidden" id="aiState">KI aktiv</div>
+        <div class="ai-state hidden" id="aiState"><span></span>KI aktiv</div>
         <div class="copy-state hidden" id="copyState">✅ Text kopiert</div>
 
         <label class="field-label" for="finalDoc">Fertige Dokumentation</label>
-        <textarea id="finalDoc" rows="10" readonly placeholder="Nach dem Stoppen erscheint hier die KI-Dokumentation."></textarea>
+        <div id="finalDoc" class="documentation-box" role="region" aria-live="polite" aria-label="Fertige Dokumentation">
+          <p class="doc-placeholder">Nach dem Stoppen erscheint hier die KI-Dokumentation.</p>
+        </div>
 
-        <button class="primary-button wide-button hidden" id="nextPatientButton" type="button">Weiter</button>
         <button class="link-button" id="editButton" type="button">Bearbeiten</button>
+        <button class="copy-button wide-button hidden" id="copyDocButton" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="9" y="9" width="11" height="11" rx="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+          <span>Dokumentation kopieren</span>
+        </button>
+        <button class="primary-button wide-button hidden" id="nextPatientButton" type="button">Weiter</button>
+        <button class="secondary-button wide-button" id="backBottomButton" type="button">Zur Tagesübersicht</button>
       </section>
 
       <section class="view hidden" id="allDocsView">
