@@ -285,6 +285,24 @@ textarea:focus {
   margin-top: 16px;
 }
 
+.detail-action-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.detail-action-button {
+  width: 100%;
+  min-height: 58px;
+  margin-top: 0;
+  text-align: center;
+}
+
+.detail-action-button span {
+  line-height: 1.15;
+}
+
 .section-top {
   display: flex;
   justify-content: space-between;
@@ -805,6 +823,15 @@ textarea:focus {
   .stop-button,
   .text-button {
     min-height: 58px;
+  }
+
+  .detail-action-row {
+    gap: 10px;
+  }
+
+  .detail-action-button {
+    padding: 0 12px;
+    font-size: 0.94rem;
   }
 
   .documentation-box {
