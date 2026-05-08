@@ -9,15 +9,16 @@ const SECTION_ORDER = [
 ];
 
 const SECTION_DEFAULTS = {
-  "Befund aktuell": "Aktueller Befund im Diktat nicht eindeutig beschrieben; funktionelle Ausgangslage weiter beobachten.",
-  Behandlung: "Therapeutische Behandlung entsprechend dem dokumentierten Therapieziel durchgeführt.",
-  "Reaktion / Verlauf": "Reaktion auf die Behandlung im Diktat nicht eindeutig beschrieben; Belastbarkeit und Verlauf weiter beobachten.",
+  "Befund aktuell": "Keine spezifischen Auffälligkeiten im Diktat beschrieben; funktionelle Ausgangslage weiter beobachten.",
+  Behandlung: "Therapeutische Behandlung im Diktat nicht näher differenziert; Massnahmen am aktuellen Therapieziel ausrichten.",
+  "Reaktion / Verlauf": "Reaktion auf die Behandlung nicht eindeutig beschrieben; Belastbarkeit und Verlauf weiter beobachten.",
   "Ausblick / Empfehlung": "Weiterführung der Therapie mit Fokus auf Funktion, Sicherheit, Belastbarkeit und Selbstständigkeit.",
 };
 
-const SYSTEM_PROMPT = `Du bist ein erfahrener Physiotherapeut mit sehr guter Dokumentationsroutine. Du erstellst aus gesprochenen Behandlungsdiktaten professionelle, natürliche und fachlich präzise Physiotherapie-Dokumentationen.
+const SYSTEM_PROMPT = `Du bist ein erfahrener Physiotherapeut mit sehr guter Dokumentationsroutine. Du erstellst aus gesprochenen Behandlungsdiktaten hochwertige, natürliche und fachlich präzise Physiotherapie-Dokumentationen.
 
 WICHTIG:
+- Das Rohdiktat ist die wichtigste Quelle. Nimm alle konkreten Angaben ernst.
 - Schreibe NICHT wie gesprochen.
 - Formuliere fachlich, klar, natürlich, praxisnah und therapiebezogen.
 - Verdichte den Inhalt sinnvoll, aber kürze NICHT zu stark.
@@ -26,46 +27,50 @@ WICHTIG:
 - Entferne Füllwörter.
 - Keine Wiederholungen.
 - Verwende medizinisch saubere Sprache, aber nicht künstlich oder übertrieben.
-- Leite den aktuellen Befund aktiv aus dem Diktat ab.
+- Leite Befund, Behandlung, Reaktion und Ausblick aktiv aus dem Diktat ab.
 - Vermeide generische Standardsätze, wenn konkrete Inhalte vorhanden sind.
 - Übernimm den Rohtext niemals direkt.
 - Patientennamen niemals übernehmen.
 - Volle Namen automatisch anonymisieren: entweder Initialen verwenden oder neutral als Patient X formulieren.
-- Keine Diagnosen frei erfinden. Wenn Angaben fehlen, fachlich vorsichtig ableiten oder neutral dokumentieren.
+- Keine Diagnosen, Werte oder Ereignisse frei erfinden.
+- Wenn ein Abschnitt nicht direkt erwähnt wird, nutze vorsichtige fachliche Ableitungen aus dem restlichen Diktat.
+- Verwende Standardsätze nur, wenn wirklich keine Information ableitbar ist.
 
 STRUKTUR:
 Du musst IMMER exakt diese 4 fett markierten Überschriften ausgeben:
 
-**Befund aktuell:**
-**Behandlung:**
-**Reaktion / Verlauf:**
-**Ausblick / Empfehlung:**
+**Befund aktuell**
+**Behandlung**
+**Reaktion / Verlauf**
+**Ausblick / Empfehlung**
 
 REGELN:
 - Jeder Abschnitt MUSS gefüllt sein.
 - Wenn Informationen fehlen, ergänze fachlich vorsichtig, aber erfinde keine konkreten Werte.
-- Pro Abschnitt 1 bis 4 übersichtliche Bullet Points.
+- Pro Abschnitt 1 bis 5 übersichtliche Bullet Points.
 - Nutze bei mehreren Angaben mehrere kurze Bullet Points.
 - Die Sprache soll wie eine hochwertige ChatGPT-Physio-Dokumentation wirken: konkret, therapeutisch, lesbar und praxisnah.
 - Schreibe ausführlicher als eine Minimalnotiz, aber weiterhin prägnant.
 - Kein Fließtext ohne Struktur.
 - Überschriften müssen exakt im Markdown-Fettformat stehen.
+- Hinter den Überschriften steht KEIN Doppelpunkt.
+- Schreibe niemals "Keine weiteren Angaben dokumentiert".
 - Gib ausschließlich das Ausgabeformat zurück.
 
 AUSGABEFORMAT:
 
 Patient X
 
-**Befund aktuell:**
+**Befund aktuell**
 - ...
 
-**Behandlung:**
+**Behandlung**
 - ...
 
-**Reaktion / Verlauf:**
+**Reaktion / Verlauf**
 - ...
 
-**Ausblick / Empfehlung:**
+**Ausblick / Empfehlung**
 - ...`;
 
 const REPAIR_PROMPT = `${SYSTEM_PROMPT}
@@ -75,7 +80,8 @@ Die vorherige Antwort war leer, unvollständig oder nicht exakt im Pflichtformat
 Erstelle sie neu.
 Alle vier Abschnitte müssen vorhanden und ausgefüllt sein.
 Nutze exakt die Markdown-fetten Überschriften und darunter Bullet Points.
-Keine relevanten Inhalte aus dem Rohdiktat verlieren.`;
+Keine relevanten Inhalte aus dem Rohdiktat verlieren.
+Wenn im Rohdiktat konkrete Informationen stehen, darf kein Abschnitt nur aus einem generischen Standardsatz bestehen.`;
 
 module.exports = async function handler(request, response) {
   if (request.method !== "POST") {
@@ -96,10 +102,16 @@ module.exports = async function handler(request, response) {
     const patientLabel = String(body.patientLabel || "").trim();
     const patientNumber = extractPatientNumber(patientLabel);
 
-    if (!text || !patientLabel || !Number.isInteger(patientNumber)) {
+    if (!patientLabel || !Number.isInteger(patientNumber)) {
       return sendJson(response, 400, {
         error: "KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.",
         details: "Body muss text und patientLabel enthalten.",
+      });
+    }
+
+    if (isNearlyEmptyText(text)) {
+      return sendJson(response, 200, {
+        documentation: normalizeDocumentation("", patientNumber),
       });
     }
 
@@ -192,9 +204,10 @@ Leite Befund, Reaktion und Ausblick therapeutisch sinnvoll ab.
 Übernimm das Rohdiktat nicht wortwörtlich.
 Fülle alle vier Abschnitte aus.
 Verwende innerhalb der Abschnitte saubere Bullet Points.
-Verwende exakt Markdown-fette Überschriften.
+Verwende exakt Markdown-fette Überschriften ohne Doppelpunkt.
 Vermeide generische Standardsätze, wenn konkrete Angaben aus dem Diktat vorhanden sind.
-Wenn Informationen fehlen, vorsichtig ableiten oder neutral dokumentieren, aber keine konkreten Werte erfinden.`;
+Wenn Informationen fehlen, vorsichtig ableiten oder neutral dokumentieren, aber keine konkreten Werte erfinden.
+Schreibe niemals "Keine weiteren Angaben dokumentiert".`;
 }
 
 function extractOutputText(data) {
@@ -213,16 +226,16 @@ function normalizeDocumentation(text, patientNumber) {
 
   return `Patient ${patientNumber}
 
-**Befund aktuell:**
+**Befund aktuell**
 ${ensureBullets(sections["Befund aktuell"], SECTION_DEFAULTS["Befund aktuell"])}
 
-**Behandlung:**
+**Behandlung**
 ${ensureBullets(sections.Behandlung, SECTION_DEFAULTS.Behandlung)}
 
-**Reaktion / Verlauf:**
+**Reaktion / Verlauf**
 ${ensureBullets(sections["Reaktion / Verlauf"], SECTION_DEFAULTS["Reaktion / Verlauf"])}
 
-**Ausblick / Empfehlung:**
+**Ausblick / Empfehlung**
 ${ensureBullets(sections["Ausblick / Empfehlung"], SECTION_DEFAULTS["Ausblick / Empfehlung"])}`;
 }
 
@@ -233,7 +246,7 @@ function extractSection(text, sectionName) {
     .map(escapeRegExp)
     .join("|");
   const pattern = new RegExp(
-    `(?:^|\\n)\\s*(?:[-•]\\s*)?(?:\\*\\*)?${escaped}\\s*:(?:\\*\\*)?\\s*([\\s\\S]*?)(?=\\n\\s*(?:[-•]\\s*)?(?:\\*\\*)?(?:${nextSections})\\s*:(?:\\*\\*)?|$)`,
+    `(?:^|\\n)\\s*(?:[-•]\\s*)?(?:\\*\\*)?${escaped}\\s*:?(?:\\*\\*)?\\s*([\\s\\S]*?)(?=\\n\\s*(?:[-•]\\s*)?(?:\\*\\*)?(?:${nextSections})\\s*:?(?:\\*\\*)?|$)`,
     "i"
   );
   const match = String(text || "").match(pattern);
@@ -262,7 +275,7 @@ function ensureBullets(value, fallback) {
   const source = !clean || clean === "..." || clean.length < 4 ? fallback : clean;
   const lines = source
     .split(/\n+/)
-    .map((line) => line.replace(/^[-•]\s*/, "").trim())
+    .map((line) => line.replace(/^[-•*]\s*/, "").trim())
     .filter(Boolean);
 
   if (lines.length) {
@@ -270,6 +283,14 @@ function ensureBullets(value, fallback) {
   }
 
   return `- ${ensureText(source, fallback)}`;
+}
+
+function isNearlyEmptyText(text) {
+  const clean = String(text || "")
+    .replace(/[.,;:!?()\-[\]{}]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return clean.length < 8 || clean.split(" ").filter(Boolean).length < 2;
 }
 
 function hasCompleteSections(text) {
