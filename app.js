@@ -33,7 +33,6 @@ const els = {
   aiState: document.querySelector("#aiState"),
   copyState: document.querySelector("#copyState"),
   nextPatientButton: document.querySelector("#nextPatientButton"),
-  backButton: document.querySelector("#backButton"),
   backBottomButton: document.querySelector("#backBottomButton"),
   backFromAllButton: document.querySelector("#backFromAllButton"),
   showAllButton: document.querySelector("#showAllButton"),
@@ -61,7 +60,6 @@ function bindEvents() {
   els.editButton.addEventListener("click", () => els.editPanel.classList.toggle("hidden"));
   els.copyDocButton.addEventListener("click", copyCurrentDocumentation);
   els.nextPatientButton.addEventListener("click", goToNextPatient);
-  els.backButton.addEventListener("click", showList);
   els.backBottomButton.addEventListener("click", showList);
   els.backFromAllButton.addEventListener("click", showList);
   els.showAllButton.addEventListener("click", showAllDocs);
@@ -482,9 +480,9 @@ function showCopyButtonSuccess(button) {
   button.dataset.originalHtml = originalHtml;
   button.classList.add("copied");
   if (label) {
-    label.textContent = "Kopiert";
+    label.textContent = "Kopiert ✓";
   } else {
-    button.textContent = "✓ Kopiert";
+    button.textContent = "Kopiert ✓";
   }
 
   window.setTimeout(() => {
@@ -494,7 +492,7 @@ function showCopyButtonSuccess(button) {
     } else {
       button.innerHTML = originalHtml;
     }
-  }, 1600);
+  }, 2000);
 }
 
 function getAllDocsText() {
@@ -577,12 +575,15 @@ function extractDocumentationSections(documentation) {
       .filter((_, nextIndex) => nextIndex > index)
       .map(escapeRegExp)
       .join("|");
-    const endPattern = nextTitles ? `(?=\\n\\s*•?\\s*(?:${nextTitles})\\s*:|$)` : "$";
-    const pattern = new RegExp(`(?:^|\\n)\\s*•?\\s*${escapeRegExp(title)}\\s*:\\s*([\\s\\S]*?)${endPattern}`, "i");
+    const endPattern = nextTitles ? `(?=\\n\\s*(?:[-•]\\s*)?(?:\\*\\*)?(?:${nextTitles})\\s*:?(?:\\*\\*)?|$)` : "$";
+    const pattern = new RegExp(
+      `(?:^|\\n)\\s*(?:[-•]\\s*)?(?:\\*\\*)?${escapeRegExp(title)}\\s*:?(?:\\*\\*)?\\s*([\\s\\S]*?)${endPattern}`,
+      "i"
+    );
     const match = String(documentation || "").match(pattern);
     return {
       title,
-      points: splitSectionPoints(match?.[1] || "Keine weiteren Angaben dokumentiert."),
+      points: splitSectionPoints(match?.[1] || "Im Diktat nicht eindeutig beschrieben; weiter beobachten."),
     };
   });
 }
@@ -593,13 +594,13 @@ function splitSectionPoints(value) {
     .trim();
   const lines = clean
     .split(/\n+/)
-    .map((line) => line.replace(/^[-•]\s*/, "").trim())
+    .map((line) => line.replace(/^[-•*]\s*/, "").trim())
     .filter(Boolean);
 
   if (lines.length > 1) return lines;
   if (lines.length === 1) return [lines[0]];
 
-  return ["Keine weiteren Angaben dokumentiert."];
+  return ["Im Diktat nicht eindeutig beschrieben; weiter beobachten."];
 }
 
 function escapeHtml(value) {
