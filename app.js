@@ -26,6 +26,7 @@ const els = {
   finalDoc: document.querySelector("#finalDoc"),
   editPanel: document.querySelector("#editPanel"),
   editButton: document.querySelector("#editButton"),
+  copyDocButton: document.querySelector("#copyDocButton"),
   createDocButton: document.querySelector("#createDocButton"),
   retryButton: document.querySelector("#retryButton"),
   errorState: document.querySelector("#errorState"),
@@ -33,6 +34,7 @@ const els = {
   copyState: document.querySelector("#copyState"),
   nextPatientButton: document.querySelector("#nextPatientButton"),
   backButton: document.querySelector("#backButton"),
+  backBottomButton: document.querySelector("#backBottomButton"),
   backFromAllButton: document.querySelector("#backFromAllButton"),
   showAllButton: document.querySelector("#showAllButton"),
   copyAllButton: document.querySelector("#copyAllButton"),
@@ -57,8 +59,10 @@ function bindEvents() {
   els.createDocButton.addEventListener("click", createDocumentation);
   els.retryButton.addEventListener("click", createDocumentation);
   els.editButton.addEventListener("click", () => els.editPanel.classList.toggle("hidden"));
+  els.copyDocButton.addEventListener("click", copyCurrentDocumentation);
   els.nextPatientButton.addEventListener("click", goToNextPatient);
   els.backButton.addEventListener("click", showList);
+  els.backBottomButton.addEventListener("click", showList);
   els.backFromAllButton.addEventListener("click", showList);
   els.showAllButton.addEventListener("click", showAllDocs);
   els.copyAllButton.addEventListener("click", copyAllDocs);
@@ -178,13 +182,33 @@ function renderList() {
     const card = document.createElement("article");
     card.className = `patient-card${active ? " active" : ""}`;
     card.innerHTML = `
-      <h3>Patient ${patient.id}</h3>
-      <span class="status ${patient.documentation ? "done" : active ? "active" : ""}">${getStatusLabel(patient, active)}</span>
-      <button class="primary-button" type="button">Diktieren</button>
+      <div class="patient-card-main">
+        <h3>Patient ${patient.id}</h3>
+        <span class="status ${patient.documentation ? "done" : active ? "active" : ""}">${getStatusLabel(patient, active)}</span>
+      </div>
+      <div class="patient-card-actions">
+        <button class="primary-button" type="button" data-action="dictate">Diktieren</button>
+        ${
+          patient.documentation
+            ? `<button class="icon-copy-button" type="button" data-action="copy" aria-label="Dokumentation von Patient ${patient.id} kopieren">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="9" y="9" width="11" height="11" rx="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+                <span>Kopieren</span>
+              </button>`
+            : ""
+        }
+      </div>
     `;
-    card.querySelector("button").addEventListener("click", () => openPatient(patient.id));
     card.addEventListener("click", (event) => {
-      if (event.target.tagName !== "BUTTON") openPatient(patient.id);
+      const actionButton = event.target.closest("button");
+      if (actionButton?.dataset.action === "copy") {
+        event.stopPropagation();
+        copyPatientDocumentation(patient.id, actionButton);
+        return;
+      }
+      openPatient(patient.id);
     });
     els.patientGrid.append(card);
   });
@@ -205,13 +229,16 @@ function openPatient(patientId) {
   els.patientTitle.textContent = `Patient ${patient.id}`;
   els.patientPosition.textContent = `${patient.id} von ${state.patients.length}`;
   els.rawText.value = patient.rawText || "";
-  els.finalDoc.value = patient.documentation || "";
+  renderDocumentation(patient.documentation);
   els.editPanel.classList.add("hidden");
   els.errorState.classList.add("hidden");
   els.retryButton.classList.add("hidden");
-  els.copyState.classList.toggle("hidden", !patient.documentation);
+  els.copyState.classList.add("hidden");
   els.aiState.classList.toggle("hidden", !patient.documentation);
-  els.aiState.textContent = patient.documentation ? "KI aktiv" : "";
+  els.aiState.innerHTML = "<span></span>KI aktiv";
+  els.copyDocButton.classList.toggle("hidden", !patient.documentation);
+  els.copyDocButton.classList.remove("copied");
+  els.copyDocButton.querySelector("span").textContent = "Dokumentation kopieren";
   els.nextPatientButton.classList.toggle("hidden", !patient.documentation);
   updateNextButton();
   saveState();
@@ -284,15 +311,18 @@ async function createDocumentation() {
     patient.rawText = rawText;
     patient.documentation = documentation;
     patient.status = "done";
-    els.finalDoc.value = documentation;
+    renderDocumentation(documentation);
     showDictationSuccess();
-    els.aiState.textContent = "KI aktiv";
+    els.aiState.innerHTML = "<span></span>KI aktiv";
     els.aiState.classList.remove("hidden");
-    els.copyState.classList.remove("hidden");
+    els.copyState.classList.add("hidden");
+    els.copyDocButton.classList.remove("hidden");
+    els.copyDocButton.classList.remove("copied");
+    els.copyDocButton.querySelector("span").textContent = "Dokumentation kopieren";
     els.nextPatientButton.classList.remove("hidden");
     updateNextButton();
     saveState();
-    await copyText(documentation, "Dokumentation kopiert.");
+    toast("KI-Dokumentation erstellt.");
   } catch (error) {
     showAiError(error.message);
   } finally {
@@ -345,10 +375,36 @@ function showAiError(message = "KI-Verarbeitung fehlgeschlagen – bitte erneut 
   els.errorState.classList.remove("hidden");
   els.retryButton.classList.remove("hidden");
   els.copyState.classList.add("hidden");
+  els.copyDocButton.classList.add("hidden");
   els.nextPatientButton.classList.add("hidden");
-  els.aiState.textContent = "KI nicht aktiv";
+  els.aiState.innerHTML = "<span></span>KI nicht aktiv";
   els.aiState.classList.remove("hidden");
   toast("KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.");
+}
+
+async function copyCurrentDocumentation() {
+  const patient = getCurrentPatient();
+  if (!patient?.documentation) {
+    toast("Noch keine Dokumentation vorhanden.");
+    return;
+  }
+
+  const copied = await copyText(patient.documentation, "Dokumentation kopiert.");
+  if (!copied) return;
+
+  showCopyConfirmation();
+  showCopyButtonSuccess(els.copyDocButton);
+}
+
+async function copyPatientDocumentation(patientId, button) {
+  const patient = state.patients.find((item) => item.id === patientId);
+  if (!patient?.documentation) {
+    toast("Noch keine Dokumentation vorhanden.");
+    return;
+  }
+
+  const copied = await copyText(patient.documentation, `Patient ${patient.id} kopiert.`);
+  if (copied && button) showCopyButtonSuccess(button);
 }
 
 function saveCurrentRawText() {
@@ -379,7 +435,7 @@ function showList() {
 }
 
 function showAllDocs() {
-  els.allDocsText.textContent = getAllDocsText() || "Noch keine fertigen Dokumentationen vorhanden.";
+  renderAllDocs();
   showView("all");
 }
 
@@ -396,6 +452,7 @@ async function copyText(text, message) {
   try {
     await navigator.clipboard.writeText(text);
     toast(message);
+    return true;
   } catch {
     const helper = document.createElement("textarea");
     helper.value = text;
@@ -406,7 +463,38 @@ async function copyText(text, message) {
     const copied = document.execCommand("copy");
     helper.remove();
     toast(copied ? message : "Kopieren ist in diesem Browser nicht erlaubt.");
+    return copied;
   }
+}
+
+function showCopyConfirmation() {
+  els.copyState.classList.remove("hidden");
+  window.clearTimeout(showCopyConfirmation.timeout);
+  showCopyConfirmation.timeout = window.setTimeout(() => {
+    els.copyState.classList.add("hidden");
+  }, 2000);
+}
+
+function showCopyButtonSuccess(button) {
+  const label = button.querySelector("span");
+  const originalText = label ? label.textContent : button.textContent;
+  const originalHtml = button.dataset.originalHtml || button.innerHTML;
+  button.dataset.originalHtml = originalHtml;
+  button.classList.add("copied");
+  if (label) {
+    label.textContent = "Kopiert";
+  } else {
+    button.textContent = "✓ Kopiert";
+  }
+
+  window.setTimeout(() => {
+    button.classList.remove("copied");
+    if (label) {
+      label.textContent = originalText;
+    } else {
+      button.innerHTML = originalHtml;
+    }
+  }, 1600);
 }
 
 function getAllDocsText() {
@@ -414,6 +502,117 @@ function getAllDocsText() {
     .filter((patient) => patient.documentation)
     .map((patient) => patient.documentation)
     .join("\n\n");
+}
+
+function renderDocumentation(documentation) {
+  if (!documentation) {
+    els.finalDoc.innerHTML = `<p class="doc-placeholder">Nach dem Stoppen erscheint hier die KI-Dokumentation.</p>`;
+    return;
+  }
+
+  els.finalDoc.innerHTML = documentationToHtml(documentation);
+}
+
+function renderAllDocs() {
+  const documentedPatients = state.patients.filter((patient) => patient.documentation);
+  els.allDocsText.innerHTML = "";
+
+  if (!documentedPatients.length) {
+    els.allDocsText.innerHTML = `<p class="doc-placeholder">Noch keine fertigen Dokumentationen vorhanden.</p>`;
+    return;
+  }
+
+  documentedPatients.forEach((patient) => {
+    const entry = document.createElement("article");
+    entry.className = "all-doc-entry";
+    entry.innerHTML = `
+      <div class="all-doc-entry-top">
+        <h3>Patient ${patient.id}</h3>
+        <button class="icon-copy-button" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="9" y="9" width="11" height="11" rx="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+          <span>Kopieren</span>
+        </button>
+      </div>
+      <div class="documentation-box compact-doc">${documentationToHtml(patient.documentation)}</div>
+    `;
+    entry.querySelector("button").addEventListener("click", () => copyPatientDocumentation(patient.id, entry.querySelector("button")));
+    els.allDocsText.append(entry);
+  });
+}
+
+function documentationToHtml(documentation) {
+  const patientTitle = extractPatientTitle(documentation);
+  const sections = extractDocumentationSections(documentation);
+  const sectionHtml = sections
+    .map(
+      (section) => `
+        <section class="doc-section">
+          <h3>${escapeHtml(section.title)}</h3>
+          <ul>
+            ${section.points.map((point) => `<li>${escapeHtml(point)}</li>`).join("")}
+          </ul>
+        </section>
+      `
+    )
+    .join("");
+
+  return `
+    <div class="doc-patient-title">${escapeHtml(patientTitle)}</div>
+    ${sectionHtml}
+  `;
+}
+
+function extractPatientTitle(documentation) {
+  const match = String(documentation || "").match(/Patient\s+\d+/i);
+  return match ? match[0].replace(/^patient/i, "Patient") : "Patient";
+}
+
+function extractDocumentationSections(documentation) {
+  const order = ["Befund aktuell", "Behandlung", "Reaktion / Verlauf", "Ausblick / Empfehlung"];
+  return order.map((title, index) => {
+    const nextTitles = order
+      .filter((_, nextIndex) => nextIndex > index)
+      .map(escapeRegExp)
+      .join("|");
+    const endPattern = nextTitles ? `(?=\\n\\s*•?\\s*(?:${nextTitles})\\s*:|$)` : "$";
+    const pattern = new RegExp(`(?:^|\\n)\\s*•?\\s*${escapeRegExp(title)}\\s*:\\s*([\\s\\S]*?)${endPattern}`, "i");
+    const match = String(documentation || "").match(pattern);
+    return {
+      title,
+      points: splitSectionPoints(match?.[1] || "Keine weiteren Angaben dokumentiert."),
+    };
+  });
+}
+
+function splitSectionPoints(value) {
+  const clean = String(value || "")
+    .replace(/\r/g, "")
+    .trim();
+  const lines = clean
+    .split(/\n+/)
+    .map((line) => line.replace(/^[-•]\s*/, "").trim())
+    .filter(Boolean);
+
+  if (lines.length > 1) return lines;
+  if (lines.length === 1) return [lines[0]];
+
+  return ["Keine weiteren Angaben dokumentiert."];
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function getCurrentPatient() {
