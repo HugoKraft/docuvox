@@ -9,55 +9,73 @@ const SECTION_ORDER = [
 ];
 
 const SECTION_DEFAULTS = {
-  "Befund aktuell": "Aktueller Befund aus Diktat nicht eindeutig ableitbar.",
-  Behandlung: "Therapeutische Behandlung gemäss Diktat durchgeführt.",
-  "Reaktion / Verlauf": "Behandlung wurde toleriert, weiterer Verlauf beobachten.",
-  "Ausblick / Empfehlung": "Weiterführung der Therapie mit Fokus auf Funktion, Sicherheit und Selbstständigkeit.",
+  "Befund aktuell": "Aktueller Befund im Diktat nicht eindeutig beschrieben; funktionelle Ausgangslage weiter beobachten.",
+  Behandlung: "Therapeutische Behandlung entsprechend dem dokumentierten Therapieziel durchgeführt.",
+  "Reaktion / Verlauf": "Reaktion auf die Behandlung im Diktat nicht eindeutig beschrieben; Belastbarkeit und Verlauf weiter beobachten.",
+  "Ausblick / Empfehlung": "Weiterführung der Therapie mit Fokus auf Funktion, Sicherheit, Belastbarkeit und Selbstständigkeit.",
 };
 
-const SYSTEM_PROMPT = `Du bist ein erfahrener Physiotherapeut und erstellst aus einem gesprochenen Diktat eine professionelle, kurze Dokumentation.
+const SYSTEM_PROMPT = `Du bist ein erfahrener Physiotherapeut mit sehr guter Dokumentationsroutine. Du erstellst aus gesprochenen Behandlungsdiktaten professionelle, natürliche und fachlich präzise Physiotherapie-Dokumentationen.
 
 WICHTIG:
 - Schreibe NICHT wie gesprochen.
-- Formuliere fachlich, klar und prägnant.
-- Verdichte den Inhalt.
+- Formuliere fachlich, klar, natürlich, praxisnah und therapiebezogen.
+- Verdichte den Inhalt sinnvoll, aber kürze NICHT zu stark.
+- Erhalte konkrete relevante Inhalte aus dem Diktat möglichst vollständig.
+- Keine relevanten Angaben verlieren, insbesondere Mobilität, Gehstrecke, Hilfsmittel, Gangbild, Transfers, Treppen, Kraft, Gleichgewicht, Koordination, Schmerzen, NRS, Lokalisation, Übungen, Wiederholungen, Theraband, Geräte, Tonus, Spastik, ROM, Reaktion, Fortschritt, Rückschritt, Heimübungen, Sturzprophylaxe, Gangsicherheit und Selbstständigkeit.
 - Entferne Füllwörter.
 - Keine Wiederholungen.
-- Verwende medizinische Sprache.
-- Interpretiere den aktuellen Befund aktiv aus dem Diktat.
+- Verwende medizinisch saubere Sprache, aber nicht künstlich oder übertrieben.
+- Leite den aktuellen Befund aktiv aus dem Diktat ab.
+- Vermeide generische Standardsätze, wenn konkrete Inhalte vorhanden sind.
 - Übernimm den Rohtext niemals direkt.
-- Anonymisiere Patientennamen.
+- Patientennamen niemals übernehmen.
+- Volle Namen automatisch anonymisieren: entweder Initialen verwenden oder neutral als Patient X formulieren.
+- Keine Diagnosen frei erfinden. Wenn Angaben fehlen, fachlich vorsichtig ableiten oder neutral dokumentieren.
 
 STRUKTUR:
-Du musst IMMER exakt diese 4 Punkte ausgeben:
+Du musst IMMER exakt diese 4 fett markierten Überschriften ausgeben:
 
-• Befund aktuell:
-• Behandlung:
-• Reaktion / Verlauf:
-• Ausblick / Empfehlung:
+**Befund aktuell:**
+**Behandlung:**
+**Reaktion / Verlauf:**
+**Ausblick / Empfehlung:**
 
 REGELN:
 - Jeder Abschnitt MUSS gefüllt sein.
-- Wenn Informationen fehlen, ergänze medizinisch sinnvoll.
-- Maximal 2 bis 3 kurze Sätze pro Abschnitt.
+- Wenn Informationen fehlen, ergänze fachlich vorsichtig, aber erfinde keine konkreten Werte.
+- Pro Abschnitt 1 bis 4 übersichtliche Bullet Points.
+- Nutze bei mehreren Angaben mehrere kurze Bullet Points.
+- Die Sprache soll wie eine hochwertige ChatGPT-Physio-Dokumentation wirken: konkret, therapeutisch, lesbar und praxisnah.
+- Schreibe ausführlicher als eine Minimalnotiz, aber weiterhin prägnant.
 - Kein Fließtext ohne Struktur.
+- Überschriften müssen exakt im Markdown-Fettformat stehen.
 - Gib ausschließlich das Ausgabeformat zurück.
 
 AUSGABEFORMAT:
 
 Patient X
 
-• Befund aktuell: ...
-• Behandlung: ...
-• Reaktion / Verlauf: ...
-• Ausblick / Empfehlung: ...`;
+**Befund aktuell:**
+- ...
+
+**Behandlung:**
+- ...
+
+**Reaktion / Verlauf:**
+- ...
+
+**Ausblick / Empfehlung:**
+- ...`;
 
 const REPAIR_PROMPT = `${SYSTEM_PROMPT}
 
 Zusatzauftrag:
 Die vorherige Antwort war leer, unvollständig oder nicht exakt im Pflichtformat.
 Erstelle sie neu.
-Alle vier Abschnitte müssen vorhanden und ausgefüllt sein.`;
+Alle vier Abschnitte müssen vorhanden und ausgefüllt sein.
+Nutze exakt die Markdown-fetten Überschriften und darunter Bullet Points.
+Keine relevanten Inhalte aus dem Rohdiktat verlieren.`;
 
 module.exports = async function handler(request, response) {
   if (request.method !== "POST") {
@@ -130,7 +148,7 @@ async function requestOpenAi({ apiKey, model, instructions, input }) {
     model,
     instructions,
     input,
-    max_output_tokens: 700,
+    max_output_tokens: 1600,
   };
 
   if (model.startsWith("gpt-5")) {
@@ -166,13 +184,17 @@ Rohdiktat:
 ${text}
 
 Aufgabe:
-Erstelle daraus eine professionelle, kurze Physiotherapie-Dokumentation im Pflichtformat.
+Erstelle daraus eine professionelle Physiotherapie-Dokumentation im Pflichtformat.
 Schreibe nicht wie gesprochen.
-Verdichte den Inhalt fachlich.
+Verdichte den Inhalt fachlich, aber erhalte konkrete relevante Details vollständig.
 Leite Befund, Reaktion und Ausblick therapeutisch sinnvoll ab.
 Übernimm keine Patientennamen.
 Übernimm das Rohdiktat nicht wortwörtlich.
-Fülle alle vier Abschnitte aus.`;
+Fülle alle vier Abschnitte aus.
+Verwende innerhalb der Abschnitte saubere Bullet Points.
+Verwende exakt Markdown-fette Überschriften.
+Vermeide generische Standardsätze, wenn konkrete Angaben aus dem Diktat vorhanden sind.
+Wenn Informationen fehlen, vorsichtig ableiten oder neutral dokumentieren, aber keine konkreten Werte erfinden.`;
 }
 
 function extractOutputText(data) {
@@ -191,10 +213,17 @@ function normalizeDocumentation(text, patientNumber) {
 
   return `Patient ${patientNumber}
 
-• Befund aktuell: ${ensureText(sections["Befund aktuell"], SECTION_DEFAULTS["Befund aktuell"])}
-• Behandlung: ${ensureText(sections.Behandlung, SECTION_DEFAULTS.Behandlung)}
-• Reaktion / Verlauf: ${ensureText(sections["Reaktion / Verlauf"], SECTION_DEFAULTS["Reaktion / Verlauf"])}
-• Ausblick / Empfehlung: ${ensureText(sections["Ausblick / Empfehlung"], SECTION_DEFAULTS["Ausblick / Empfehlung"])}`;
+**Befund aktuell:**
+${ensureBullets(sections["Befund aktuell"], SECTION_DEFAULTS["Befund aktuell"])}
+
+**Behandlung:**
+${ensureBullets(sections.Behandlung, SECTION_DEFAULTS.Behandlung)}
+
+**Reaktion / Verlauf:**
+${ensureBullets(sections["Reaktion / Verlauf"], SECTION_DEFAULTS["Reaktion / Verlauf"])}
+
+**Ausblick / Empfehlung:**
+${ensureBullets(sections["Ausblick / Empfehlung"], SECTION_DEFAULTS["Ausblick / Empfehlung"])}`;
 }
 
 function extractSection(text, sectionName) {
@@ -203,7 +232,10 @@ function extractSection(text, sectionName) {
     .filter((name) => name !== sectionName)
     .map(escapeRegExp)
     .join("|");
-  const pattern = new RegExp(`(?:•\\s*)?${escaped}\\s*:\\s*([\\s\\S]*?)(?=\\n\\s*(?:•\\s*)?(?:${nextSections})\\s*:|$)`, "i");
+  const pattern = new RegExp(
+    `(?:^|\\n)\\s*(?:[-•]\\s*)?(?:\\*\\*)?${escaped}\\s*:(?:\\*\\*)?\\s*([\\s\\S]*?)(?=\\n\\s*(?:[-•]\\s*)?(?:\\*\\*)?(?:${nextSections})\\s*:(?:\\*\\*)?|$)`,
+    "i"
+  );
   const match = String(text || "").match(pattern);
 
   return sanitizeSection(match?.[1] || "");
@@ -211,9 +243,11 @@ function extractSection(text, sectionName) {
 
 function sanitizeSection(value) {
   return String(value || "")
-    .replace(/^[-•\s]+/, "")
     .replace(/\b(wir haben dann|also|eben|eigentlich|quasi|sozusagen)\b/gi, "")
-    .replace(/\s+/g, " ")
+    .replace(/\b(Herr|Frau)\s+[A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)+/g, "Patient")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
@@ -221,6 +255,21 @@ function ensureText(value, fallback) {
   const clean = sanitizeSection(value);
   if (!clean || clean === "..." || clean.length < 4) return fallback;
   return /[.!?]$/.test(clean) ? clean : `${clean}.`;
+}
+
+function ensureBullets(value, fallback) {
+  const clean = sanitizeSection(value);
+  const source = !clean || clean === "..." || clean.length < 4 ? fallback : clean;
+  const lines = source
+    .split(/\n+/)
+    .map((line) => line.replace(/^[-•]\s*/, "").trim())
+    .filter(Boolean);
+
+  if (lines.length) {
+    return lines.map((line) => `- ${ensureText(line, fallback)}`).join("\n");
+  }
+
+  return `- ${ensureText(source, fallback)}`;
 }
 
 function hasCompleteSections(text) {
