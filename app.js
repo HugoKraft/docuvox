@@ -234,11 +234,9 @@ function openPatient(patientId) {
   els.copyState.classList.add("hidden");
   els.aiState.classList.toggle("hidden", !patient.documentation);
   els.aiState.innerHTML = "<span></span>KI aktiv";
-  els.copyDocButton.classList.toggle("hidden", !patient.documentation);
   els.copyDocButton.classList.remove("copied");
   els.copyDocButton.querySelector("span").textContent = "Dokumentation kopieren";
-  els.nextPatientButton.classList.toggle("hidden", !patient.documentation);
-  updateNextButton();
+  updateDetailActions();
   saveState();
   showView("detail");
 }
@@ -317,8 +315,7 @@ async function createDocumentation() {
     els.copyDocButton.classList.remove("hidden");
     els.copyDocButton.classList.remove("copied");
     els.copyDocButton.querySelector("span").textContent = "Dokumentation kopieren";
-    els.nextPatientButton.classList.remove("hidden");
-    updateNextButton();
+    updateDetailActions();
     saveState();
     toast("KI-Dokumentation erstellt.");
   } catch (error) {
@@ -375,6 +372,7 @@ function showAiError(message = "KI-Verarbeitung fehlgeschlagen – bitte erneut 
   els.copyState.classList.add("hidden");
   els.copyDocButton.classList.add("hidden");
   els.nextPatientButton.classList.add("hidden");
+  els.backBottomButton.classList.remove("prominent-return");
   els.aiState.innerHTML = "<span></span>KI nicht aktiv";
   els.aiState.classList.remove("hidden");
   toast("KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.");
@@ -413,7 +411,7 @@ function saveCurrentRawText() {
 }
 
 function goToNextPatient() {
-  const next = state.patients.find((patient) => patient.id > currentPatientId && !patient.documentation);
+  const next = getNextOpenPatient();
   if (next) {
     openPatient(next.id);
   } else {
@@ -421,9 +419,22 @@ function goToNextPatient() {
   }
 }
 
-function updateNextButton() {
-  const next = state.patients.find((patient) => patient.id > currentPatientId && !patient.documentation);
-  els.nextPatientButton.textContent = next ? `Weiter zu Patient ${next.id}` : "Zurück zur Tagesliste";
+function updateDetailActions() {
+  const patient = getCurrentPatient();
+  const hasDocumentation = Boolean(patient?.documentation);
+  const next = getNextOpenPatient();
+
+  els.copyDocButton.classList.toggle("hidden", !hasDocumentation);
+  els.nextPatientButton.classList.toggle("hidden", !hasDocumentation || !next);
+  els.backBottomButton.classList.toggle("prominent-return", hasDocumentation && !next);
+
+  if (next) {
+    els.nextPatientButton.textContent = `Weiter zu Patient ${next.id}`;
+  }
+}
+
+function getNextOpenPatient() {
+  return state.patients.find((patient) => patient.id > currentPatientId && !patient.documentation);
 }
 
 function showList() {
