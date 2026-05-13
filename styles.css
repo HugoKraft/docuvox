@@ -285,11 +285,19 @@ textarea:focus {
   margin-top: 16px;
 }
 
+.wide-button.prominent-return {
+  color: var(--white);
+  background: var(--blue-800);
+  border-color: var(--blue-800);
+  box-shadow: 0 12px 24px rgba(15, 63, 133, 0.18);
+}
+
 .detail-action-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 16px;
+  width: 100%;
 }
 
 .detail-action-button {
