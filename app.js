@@ -1,4 +1,5 @@
 const STORAGE_KEY = "docuvox-day-v3";
+const BACKUP_KEY = "docuvox-last-day-backup-v1";
 
 let state = loadState();
 let currentPatientId = null;
@@ -43,10 +44,38 @@ const els = {
   toast: document.querySelector("#toast"),
 };
 
+setupGeneratedUi();
 bindEvents();
 initSpeech();
 registerServiceWorker();
 renderInitialView();
+
+function setupGeneratedUi() {
+  els.processingState = document.createElement("div");
+  els.processingState.className = "processing-state hidden";
+  els.processingState.setAttribute("role", "status");
+  els.processingState.setAttribute("aria-live", "polite");
+  els.processingState.innerHTML = `
+    <div class="processing-ring" aria-hidden="true"></div>
+    <div>
+      <strong>KI erstellt Dokumentation ...</strong>
+      <p>Diktat wird strukturiert und fachlich geprüft.</p>
+    </div>
+  `;
+  els.finalDoc.parentElement.insertBefore(els.processingState, els.finalDoc);
+
+  els.restoreStartButton = document.createElement("button");
+  els.restoreStartButton.className = "backup-button hidden";
+  els.restoreStartButton.type = "button";
+  els.restoreStartButton.textContent = "Letzte Tagesliste wiederherstellen";
+  els.startView.querySelector(".hero-card").append(els.restoreStartButton);
+
+  els.restoreListButton = document.createElement("button");
+  els.restoreListButton.className = "backup-button hidden";
+  els.restoreListButton.type = "button";
+  els.restoreListButton.textContent = "Letzte Tagesliste wiederherstellen";
+  els.listView.insertBefore(els.restoreListButton, els.newDayButton);
+}
 
 function bindEvents() {
   els.dayForm.addEventListener("submit", createDayList);
@@ -65,7 +94,9 @@ function bindEvents() {
   els.showAllButton.addEventListener("click", showAllDocs);
   els.copyAllButton.addEventListener("click", copyAllDocs);
   els.copyAllTopButton.addEventListener("click", copyAllDocs);
-  els.newDayButton.addEventListener("click", resetDay);
+  els.newDayButton.addEventListener("click", confirmNewDay);
+  els.restoreStartButton.addEventListener("click", restoreLastDayBackup);
+  els.restoreListButton.addEventListener("click", restoreLastDayBackup);
   els.rawText.addEventListener("input", saveCurrentRawText);
 }
 
@@ -148,15 +179,30 @@ function createDayList(event) {
 
 function resetDay() {
   if (isRecording) stopDictation(false);
+  saveLastDayBackup();
+  resetActiveDay();
+}
+
+function resetActiveDay() {
   state = createEmptyState();
   currentPatientId = null;
   els.patientCount.value = "";
   document.querySelectorAll("[data-count]").forEach((item) => item.classList.remove("active"));
   saveState();
+  updateBackupControls();
   showView("start");
 }
 
+function confirmNewDay() {
+  const confirmed = window.confirm(
+    "Neue Tagesliste starten?\n\nDie aktuelle Tagesliste wird als letzte Tagesliste gesichert und kann wiederhergestellt werden."
+  );
+  if (!confirmed) return;
+  resetDay();
+}
+
 function renderInitialView() {
+  updateBackupControls();
   if (state.patients.length) {
     renderList();
     showView("list");
@@ -166,6 +212,7 @@ function renderInitialView() {
 }
 
 function renderList() {
+  updateBackupControls();
   const done = state.patients.filter((patient) => patient.documentation).length;
   const total = state.patients.length;
   const percent = total ? Math.round((done / total) * 100) : 0;
@@ -299,8 +346,8 @@ async function createDocumentation() {
     return;
   }
 
-  setProcessingState(true);
   hideResultStates();
+  setProcessingState(true);
 
   try {
     const documentation = await createAiDocumentation(rawText, `Patient ${patient.id}`);
@@ -352,7 +399,9 @@ function setProcessingState(active) {
   els.retryButton.disabled = active;
   els.stopDictationButton.disabled = active;
   els.startDictationButton.disabled = active;
-  els.speechStatus.textContent = active ? "KI verarbeitet das Diktat..." : "Bereit für Spracheingabe.";
+  els.processingState.classList.toggle("hidden", !active);
+  els.finalDoc.classList.toggle("is-processing", active);
+  els.speechStatus.textContent = active ? "KI erstellt Dokumentation ..." : "Bereit für Spracheingabe.";
 }
 
 function hideResultStates() {
@@ -360,6 +409,7 @@ function hideResultStates() {
   els.retryButton.classList.add("hidden");
   els.copyState.classList.add("hidden");
   els.aiState.classList.add("hidden");
+  els.processingState.classList.add("hidden");
 }
 
 function showAiError(message = "KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.") {
@@ -385,7 +435,7 @@ async function copyCurrentDocumentation() {
     return;
   }
 
-  const copied = await copyText(patient.documentation, "Dokumentation kopiert.");
+  const copied = await copyText(buildPlainTextDocumentation(patient), "Dokumentation kopiert.");
   if (!copied) return;
 
   showCopyConfirmation();
@@ -399,7 +449,7 @@ async function copyPatientDocumentation(patientId, button) {
     return;
   }
 
-  const copied = await copyText(patient.documentation, `Patient ${patient.id} kopiert.`);
+  const copied = await copyText(buildPlainTextDocumentation(patient), `Patient ${patient.id} kopiert.`);
   if (copied && button) showCopyButtonSuccess(button);
 }
 
@@ -509,8 +559,47 @@ function showCopyButtonSuccess(button) {
 function getAllDocsText() {
   return state.patients
     .filter((patient) => patient.documentation)
-    .map((patient) => patient.documentation)
+    .map((patient) => buildPlainTextDocumentation(patient))
     .join("\n\n");
+}
+
+function buildPlainTextDocumentation(patient) {
+  if (!patient?.documentation) return "";
+  return formatDocumentationForClipboard(patient.documentation, patient.id);
+}
+
+function formatDocumentationForClipboard(documentation, patientId) {
+  const patientTitle = extractPatientTitle(documentation);
+  const fallbackTitle = patientId ? `Patient ${patientId}` : patientTitle;
+  const sections = extractDocumentationSections(documentation);
+  const lines = [fallbackTitle || patientTitle || "Patient"];
+
+  sections.forEach((section) => {
+    const points = section.points
+      .map(cleanClipboardLine)
+      .filter(Boolean);
+
+    lines.push("");
+    lines.push(section.title);
+    points.forEach((point) => lines.push(`- ${point}`));
+  });
+
+  return lines
+    .join("\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function cleanClipboardLine(value) {
+  return String(value || "")
+    .replace(/\*\*/g, "")
+    .replace(/<\/?[^>]+>/g, "")
+    .replace(/[\u00ad]/g, "")
+    .replace(/\s*-\s*\n\s*/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s+([.,;:!?])/g, "$1")
+    .trim();
 }
 
 function renderDocumentation(documentation) {
@@ -636,6 +725,7 @@ function showView(view) {
   els.listView.classList.toggle("hidden", view !== "list");
   els.detailView.classList.toggle("hidden", view !== "detail");
   els.allDocsView.classList.toggle("hidden", view !== "all");
+  updateBackupControls();
 }
 
 function loadState() {
@@ -650,6 +740,51 @@ function loadState() {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function saveLastDayBackup() {
+  if (!state.patients.length) return;
+  const backup = {
+    savedAt: new Date().toISOString(),
+    state: JSON.parse(JSON.stringify(state)),
+  };
+  localStorage.setItem(BACKUP_KEY, JSON.stringify(backup));
+}
+
+function loadLastDayBackup() {
+  try {
+    const backup = JSON.parse(localStorage.getItem(BACKUP_KEY));
+    if (backup?.state && Array.isArray(backup.state.patients)) return backup;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function updateBackupControls() {
+  const hasBackup = Boolean(loadLastDayBackup());
+  els.restoreStartButton?.classList.toggle("hidden", !hasBackup);
+  els.restoreListButton?.classList.toggle("hidden", !hasBackup);
+}
+
+function restoreLastDayBackup() {
+  const backup = loadLastDayBackup();
+  if (!backup) {
+    toast("Keine gesicherte Tagesliste vorhanden.");
+    updateBackupControls();
+    return;
+  }
+
+  const confirmed = window.confirm("Letzte Tagesliste wiederherstellen?\n\nDie aktuelle Tagesliste wird dadurch ersetzt.");
+  if (!confirmed) return;
+
+  if (isRecording) stopDictation(false);
+  state = backup.state;
+  currentPatientId = null;
+  saveState();
+  renderList();
+  showView("list");
+  toast("Letzte Tagesliste wiederhergestellt.");
 }
 
 function createEmptyState() {
