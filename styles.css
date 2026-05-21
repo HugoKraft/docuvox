@@ -55,9 +55,34 @@ button:disabled {
 
 .app-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 14px;
   margin-bottom: 22px;
+}
+
+.user-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  padding: 8px 10px;
+  color: var(--blue-900);
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.user-state button {
+  min-height: 34px;
+  padding: 0 10px;
+  color: var(--blue-900);
+  background: var(--blue-50);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-weight: 800;
 }
 
 .brand-mark {
@@ -133,6 +158,23 @@ h2 {
   gap: 22px;
   max-width: 620px;
   margin: 6vh auto;
+}
+
+.login-card {
+  display: grid;
+  gap: 16px;
+  max-width: 520px;
+  margin: 6vh auto;
+}
+
+.login-form {
+  display: grid;
+  gap: 12px;
+}
+
+.login-note {
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .day-form {
@@ -736,7 +778,7 @@ textarea:focus {
   border: 3px solid #d8e8fb;
   border-top-color: var(--blue-600);
   border-radius: 50%;
-  animation: processingSpin 1s linear infinite;
+  animation: processingSpin 1.45s linear infinite;
 }
 
 .documentation-box {
@@ -749,8 +791,9 @@ textarea:focus {
   box-shadow: 0 16px 36px rgba(8, 34, 74, 0.08);
   line-height: 1.68;
   word-break: normal;
-  overflow-wrap: break-word;
-  hyphens: auto;
+  overflow-wrap: normal;
+  hyphens: none;
+  line-break: auto;
 }
 
 .documentation-box.is-processing {
@@ -875,6 +918,16 @@ textarea:focus {
 
   .section-top {
     display: grid;
+  }
+
+  .app-header {
+    align-items: flex-start;
+  }
+
+  .user-state {
+    width: 100%;
+    justify-content: space-between;
+    margin-left: 0;
   }
 
   .section-top .primary-button,
