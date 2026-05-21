@@ -1,7 +1,12 @@
 const STORAGE_KEY = "docuvox-day-v3";
 const BACKUP_KEY = "docuvox-last-day-backup-v1";
+const USERS_KEY = "docuvox-users-v1";
+const SESSION_KEY = "docuvox-session-user-v1";
+const USER_STATE_PREFIX = "docuvox_state_";
+const USER_BACKUP_PREFIX = "docuvox_backup_";
 
-let state = loadState();
+let currentUser = loadSessionUser();
+let state = createEmptyState();
 let currentPatientId = null;
 let recognition = null;
 let isRecording = false;
@@ -48,9 +53,43 @@ setupGeneratedUi();
 bindEvents();
 initSpeech();
 registerServiceWorker();
-renderInitialView();
+bootApp();
 
 function setupGeneratedUi() {
+  els.loginView = document.createElement("section");
+  els.loginView.className = "view login-view hidden";
+  els.loginView.id = "loginView";
+  els.loginView.innerHTML = `
+    <div class="login-card">
+      <p class="eyebrow">Login</p>
+      <h2>Bei DocuVox anmelden</h2>
+      <p class="login-note">MVP only - spaeter sichere Authentifizierung und Cloud-Sync.</p>
+      <form id="loginForm" class="login-form">
+        <label class="field-label" for="loginUsername">Benutzername</label>
+        <input id="loginUsername" type="text" autocomplete="username" placeholder="z. B. hugo" required />
+        <label class="field-label" for="loginPassword">Passwort</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Passwort" required />
+        <button class="primary-button" type="submit">Einloggen</button>
+        <button class="secondary-button" id="demoUserButton" type="button">Demo-Nutzer erstellen</button>
+      </form>
+    </div>
+  `;
+  els.startView.parentElement.insertBefore(els.loginView, els.startView);
+  els.loginForm = els.loginView.querySelector("#loginForm");
+  els.loginUsername = els.loginView.querySelector("#loginUsername");
+  els.loginPassword = els.loginView.querySelector("#loginPassword");
+  els.demoUserButton = els.loginView.querySelector("#demoUserButton");
+
+  els.userState = document.createElement("div");
+  els.userState.className = "user-state hidden";
+  els.userState.innerHTML = `
+    <span id="currentUserLabel"></span>
+    <button id="logoutButton" type="button">Abmelden</button>
+  `;
+  document.querySelector(".app-header").append(els.userState);
+  els.currentUserLabel = els.userState.querySelector("#currentUserLabel");
+  els.logoutButton = els.userState.querySelector("#logoutButton");
+
   els.processingState = document.createElement("div");
   els.processingState.className = "processing-state hidden";
   els.processingState.setAttribute("role", "status");
@@ -58,7 +97,7 @@ function setupGeneratedUi() {
   els.processingState.innerHTML = `
     <div class="processing-ring" aria-hidden="true"></div>
     <div>
-      <strong>KI erstellt Dokumentation ...</strong>
+      <strong>Dokumentation wird erstellt ...</strong>
       <p>Diktat wird strukturiert und fachlich geprüft.</p>
     </div>
   `;
@@ -78,6 +117,9 @@ function setupGeneratedUi() {
 }
 
 function bindEvents() {
+  els.loginForm.addEventListener("submit", handleLogin);
+  els.demoUserButton.addEventListener("click", createDemoUser);
+  els.logoutButton.addEventListener("click", logout);
   els.dayForm.addEventListener("submit", createDayList);
   document.querySelectorAll("[data-count]").forEach((button) => {
     button.addEventListener("click", () => pickCount(button));
@@ -98,6 +140,159 @@ function bindEvents() {
   els.restoreStartButton.addEventListener("click", restoreLastDayBackup);
   els.restoreListButton.addEventListener("click", restoreLastDayBackup);
   els.rawText.addEventListener("input", saveCurrentRawText);
+}
+
+async function bootApp() {
+  if (!currentUser) {
+    showLogin();
+    return;
+  }
+
+  state = loadState();
+  updateUserUi();
+  renderInitialView();
+}
+
+function showLogin() {
+  currentUser = null;
+  currentPatientId = null;
+  state = createEmptyState();
+  localStorage.removeItem(SESSION_KEY);
+  updateUserUi();
+  showView("login");
+  window.setTimeout(() => els.loginUsername.focus(), 0);
+}
+
+async function handleLogin(event) {
+  event.preventDefault();
+  const username = els.loginUsername.value.trim();
+  const password = els.loginPassword.value;
+
+  if (!username || !password) {
+    toast("Bitte Benutzername und Passwort eingeben.");
+    return;
+  }
+
+  const users = loadUsers();
+  const userId = normalizeUserId(username);
+  const existingUser = users[userId];
+  const passwordHash = await hashPassword(password, userId);
+
+  if (existingUser && existingUser.passwordHash !== passwordHash) {
+    toast("Login fehlgeschlagen.");
+    return;
+  }
+
+  if (!existingUser) {
+    users[userId] = {
+      userId,
+      username,
+      passwordHash,
+      createdAt: new Date().toISOString(),
+    };
+    saveUsers(users);
+  }
+
+  currentUser = {
+    userId,
+    username: users[userId].username || username,
+  };
+  localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+  migrateLegacyStateIfNeeded();
+  state = loadState();
+  updateUserUi();
+  els.loginPassword.value = "";
+  renderInitialView();
+}
+
+async function createDemoUser() {
+  els.loginUsername.value = "demo";
+  els.loginPassword.value = "demo";
+  await handleLogin(new Event("submit"));
+}
+
+function logout() {
+  if (isRecording) stopDictation(false);
+  saveState();
+  showLogin();
+}
+
+function updateUserUi() {
+  els.userState.classList.toggle("hidden", !currentUser);
+  els.currentUserLabel.textContent = currentUser ? currentUser.username : "";
+}
+
+function loadUsers() {
+  try {
+    const users = JSON.parse(localStorage.getItem(USERS_KEY));
+    if (users && typeof users === "object") return users;
+  } catch {
+    return {};
+  }
+  return {};
+}
+
+function saveUsers(users) {
+  localStorage.setItem(USERS_KEY, JSON.stringify(users));
+}
+
+function loadSessionUser() {
+  try {
+    const user = JSON.parse(localStorage.getItem(SESSION_KEY));
+    if (user?.userId && user?.username) return user;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function normalizeUserId(username) {
+  return String(username || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "user";
+}
+
+async function hashPassword(password, userId) {
+  // MVP only - spaeter durch sichere serverseitige Authentifizierung ersetzen.
+  const source = `docuvox-mvp-v1:${userId}:${password}`;
+  if (!crypto.subtle) return fallbackHash(source);
+  const encoded = new TextEncoder().encode(source);
+  const digest = await crypto.subtle.digest("SHA-256", encoded);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function fallbackHash(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fallback-${(hash >>> 0).toString(16)}`;
+}
+
+function getStateStorageKey() {
+  return currentUser ? `${USER_STATE_PREFIX}${currentUser.userId}` : STORAGE_KEY;
+}
+
+function getBackupStorageKey() {
+  return currentUser ? `${USER_BACKUP_PREFIX}${currentUser.userId}` : BACKUP_KEY;
+}
+
+function migrateLegacyStateIfNeeded() {
+  if (!currentUser) return;
+  const userKey = getStateStorageKey();
+  if (localStorage.getItem(userKey)) return;
+  const legacyState = localStorage.getItem(STORAGE_KEY);
+  if (legacyState) localStorage.setItem(userKey, legacyState);
+  const legacyBackup = localStorage.getItem(BACKUP_KEY);
+  const userBackupKey = getBackupStorageKey();
+  if (legacyBackup && !localStorage.getItem(userBackupKey)) localStorage.setItem(userBackupKey, legacyBackup);
 }
 
 function initSpeech() {
@@ -163,6 +358,9 @@ function createDayList(event) {
 
   state = {
     date: today(),
+    dayId: `${today()}-${currentUser?.userId || "local"}`,
+    userId: currentUser?.userId || null,
+    updatedAt: new Date().toISOString(),
     activePatientId: null,
     patients: Array.from({ length: count }, (_, index) => ({
       id: index + 1,
@@ -401,7 +599,7 @@ function setProcessingState(active) {
   els.startDictationButton.disabled = active;
   els.processingState.classList.toggle("hidden", !active);
   els.finalDoc.classList.toggle("is-processing", active);
-  els.speechStatus.textContent = active ? "KI erstellt Dokumentation ..." : "Bereit für Spracheingabe.";
+  els.speechStatus.textContent = active ? "Dokumentation wird erstellt ..." : "Bereit für Spracheingabe.";
 }
 
 function hideResultStates() {
@@ -413,7 +611,7 @@ function hideResultStates() {
 }
 
 function showAiError(message = "KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.") {
-  els.errorState.textContent = "KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.";
+  els.errorState.textContent = "Dokumentation konnte nicht erstellt werden. Bitte erneut versuchen.";
   if (message && !message.includes("KI-Verarbeitung fehlgeschlagen")) {
     els.errorState.textContent += ` ${message}`;
   }
@@ -425,7 +623,7 @@ function showAiError(message = "KI-Verarbeitung fehlgeschlagen – bitte erneut 
   els.backBottomButton.classList.remove("prominent-return");
   els.aiState.innerHTML = "<span></span>KI nicht aktiv";
   els.aiState.classList.remove("hidden");
-  toast("KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.");
+  toast("Dokumentation konnte nicht erstellt werden.");
 }
 
 async function copyCurrentDocumentation() {
@@ -435,7 +633,7 @@ async function copyCurrentDocumentation() {
     return;
   }
 
-  const copied = await copyText(buildPlainTextDocumentation(patient), "Dokumentation kopiert.");
+  const copied = await copyDocumentation(patient.documentation, patient.id, "Dokumentation kopiert.");
   if (!copied) return;
 
   showCopyConfirmation();
@@ -449,7 +647,7 @@ async function copyPatientDocumentation(patientId, button) {
     return;
   }
 
-  const copied = await copyText(buildPlainTextDocumentation(patient), `Patient ${patient.id} kopiert.`);
+  const copied = await copyDocumentation(patient.documentation, patient.id, `Patient ${patient.id} kopiert.`);
   if (copied && button) showCopyButtonSuccess(button);
 }
 
@@ -504,7 +702,8 @@ async function copyAllDocs() {
     toast("Noch keine fertigen Dokumentationen vorhanden.");
     return;
   }
-  await copyText(text, "Alle Dokumentationen kopiert.");
+  const documentedPatients = state.patients.filter((patient) => patient.documentation);
+  await copyRichText(text, buildAllDocsHtml(documentedPatients), "Alle Dokumentationen kopiert.");
 }
 
 async function copyText(text, message) {
@@ -524,6 +723,30 @@ async function copyText(text, message) {
     toast(copied ? message : "Kopieren ist in diesem Browser nicht erlaubt.");
     return copied;
   }
+}
+
+async function copyDocumentation(documentation, patientId, message) {
+  const plainText = formatDocumentationForClipboard(documentation, patientId);
+  const html = formatDocumentationHtmlForClipboard(documentation, patientId);
+  return copyRichText(plainText, html, message);
+}
+
+async function copyRichText(plainText, html, message) {
+  if (navigator.clipboard?.write && window.ClipboardItem) {
+    try {
+      const item = new ClipboardItem({
+        "text/plain": new Blob([plainText], { type: "text/plain" }),
+        "text/html": new Blob([html], { type: "text/html" }),
+      });
+      await navigator.clipboard.write([item]);
+      toast(message);
+      return true;
+    } catch {
+      return copyText(plainText, message);
+    }
+  }
+
+  return copyText(plainText, message);
 }
 
 function showCopyConfirmation() {
@@ -589,6 +812,57 @@ function formatDocumentationForClipboard(documentation, patientId) {
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function formatDocumentationHtmlForClipboard(documentation, patientId) {
+  const patientTitle = escapeHtml(patientId ? `Patient ${patientId}` : extractPatientTitle(documentation));
+  const sections = extractDocumentationSections(documentation);
+  const sectionHtml = sections
+    .map((section) => {
+      const points = section.points.map(cleanClipboardLine).filter(Boolean);
+      return `
+        <div style="margin: 0 0 12px 0;">
+          <p style="margin: 0 0 4px 0; font-weight: 700;"><strong>${escapeHtml(section.title)}</strong></p>
+          ${points.map((point) => `<p style="margin: 0 0 2px 0;">- ${escapeHtml(point)}</p>`).join("")}
+        </div>
+      `;
+    })
+    .join("");
+
+  return `
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: Arial, sans-serif; font-size: 12pt; line-height: 1.45; white-space: normal; word-break: normal; overflow-wrap: normal; hyphens: none; }
+          p { word-break: normal; overflow-wrap: normal; hyphens: none; }
+        </style>
+      </head>
+      <body>
+        <p style="margin: 0 0 12px 0;">${patientTitle}</p>
+        ${sectionHtml}
+      </body>
+    </html>
+  `.trim();
+}
+
+function buildAllDocsHtml(patients) {
+  return `
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: Arial, sans-serif; font-size: 12pt; line-height: 1.45; white-space: normal; word-break: normal; overflow-wrap: normal; hyphens: none; }
+          p { word-break: normal; overflow-wrap: normal; hyphens: none; }
+        </style>
+      </head>
+      <body>
+        ${patients.map((patient) => formatDocumentationHtmlForClipboard(patient.documentation, patient.id).replace(/^[\s\S]*<body>|<\/body>[\s\S]*$/g, "")).join('<div style="height: 14px;"></div>')}
+      </body>
+    </html>
+  `.trim();
 }
 
 function cleanClipboardLine(value) {
@@ -721,6 +995,7 @@ function getCurrentPatient() {
 }
 
 function showView(view) {
+  els.loginView.classList.toggle("hidden", view !== "login");
   els.startView.classList.toggle("hidden", view !== "start");
   els.listView.classList.toggle("hidden", view !== "list");
   els.detailView.classList.toggle("hidden", view !== "detail");
@@ -730,7 +1005,7 @@ function showView(view) {
 
 function loadState() {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    const saved = JSON.parse(localStorage.getItem(getStateStorageKey()));
     if (saved && Array.isArray(saved.patients)) return saved;
   } catch {
     return createEmptyState();
@@ -739,21 +1014,31 @@ function loadState() {
 }
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  localStorage.setItem(getStateStorageKey(), JSON.stringify({
+    ...state,
+    userId: currentUser?.userId || null,
+    dayId: state.dayId || `${today()}-${currentUser?.userId || "local"}`,
+    updatedAt: new Date().toISOString(),
+  }));
 }
 
 function saveLastDayBackup() {
   if (!state.patients.length) return;
   const backup = {
     savedAt: new Date().toISOString(),
-    state: JSON.parse(JSON.stringify(state)),
+    userId: currentUser?.userId || null,
+    state: JSON.parse(JSON.stringify({
+      ...state,
+      userId: currentUser?.userId || null,
+      updatedAt: new Date().toISOString(),
+    })),
   };
-  localStorage.setItem(BACKUP_KEY, JSON.stringify(backup));
+  localStorage.setItem(getBackupStorageKey(), JSON.stringify(backup));
 }
 
 function loadLastDayBackup() {
   try {
-    const backup = JSON.parse(localStorage.getItem(BACKUP_KEY));
+    const backup = JSON.parse(localStorage.getItem(getBackupStorageKey()));
     if (backup?.state && Array.isArray(backup.state.patients)) return backup;
   } catch {
     return null;
@@ -790,6 +1075,9 @@ function restoreLastDayBackup() {
 function createEmptyState() {
   return {
     date: today(),
+    dayId: `${today()}-${currentUser?.userId || "local"}`,
+    userId: currentUser?.userId || null,
+    updatedAt: new Date().toISOString(),
     activePatientId: null,
     patients: [],
   };
