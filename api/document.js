@@ -1,277 +1,274 @@
-const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+const OPENAI_API_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_MODEL = "gpt-4.1";
-const PROMPT_VERSION = "docuvox-clinical-transcription-v9";
 
-export default async function handler(request, response) {
-  if (request.method !== "POST") {
-    response.setHeader("Allow", "POST");
-    return response.status(405).json({ error: "Method not allowed" });
-  }
+const SECTION_ORDER = [
+  "Befund aktuell",
+  "Behandlung",
+  "Reaktion / Verlauf",
+  "Ausblick / Empfehlung",
+];
 
-  const apiKey = process.env.OPENAI_API_KEY;
-  const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
+const SECTION_DEFAULTS = {
+  "Befund aktuell": "Im Diktat knapp beschrieben.",
+  Behandlung: "Diktierter Therapieinhalt strukturiert übernommen.",
+  "Reaktion / Verlauf": "Verlauf im Diktat knapp beschrieben.",
+  "Ausblick / Empfehlung": "Fortführung der diktierten Maßnahmen.",
+};
 
-  if (!apiKey) {
-    return response.status(500).json({
-      error: "OPENAI_API_KEY is missing",
-      documentation: null,
-      promptVersion: PROMPT_VERSION,
-    });
-  }
+const PROTECTED_TERMS = [
+  "hypoton",
+  "hyperton",
+  "vestibulär",
+  "Dix-Hallpike",
+  "UAGS",
+  "VKB",
+  "Sit-to-Stand",
+  "Dual-Task",
+  "ADL",
+  "ROM",
+  "MRC",
+  "PNF",
+  "Bobath",
+  "Freezing",
+  "Traktion",
+  "Mobilisation",
+  "Detonisierung",
+  "costale Atmung",
+  "Thoraxmobilisation",
+  "segmental",
+  "subokzipital",
+  "scapulothorakal",
+  "Teilbelastung",
+  "Hemiparese",
+  "Hüft-TEP",
+  "Ödem",
+  "Unterarmgehstützen",
+  "Stationsrunde",
+  "Heimübungen",
+  "Kopfdrehungen",
+  "Schrittlänge",
+  "Gehgeschwindigkeit",
+];
 
-  try {
-    const body = typeof request.body === "string" ? JSON.parse(request.body) : request.body || {};
-    const rawText = String(body.text || body.rawText || "").trim();
-    const patientLabel = normalizePatientLabel(body.patientLabel, body.patientNumber);
-
-    if (!rawText) {
-      return response.status(400).json({
-        error: "Missing dictation text",
-        documentation: null,
-        promptVersion: PROMPT_VERSION,
-      });
-    }
-
-    const normalizedDictation = await callOpenAI({
-      apiKey,
-      model,
-      temperature: 0.05,
-      maxTokens: 900,
-      messages: [
-        {
-          role: "system",
-          content: buildNormalizationPrompt(),
-        },
-        {
-          role: "user",
-          content: `Patientenbezeichnung: ${patientLabel}\n\nRohdiktat:\n${rawText}`,
-        },
-      ],
-    });
-
-    const documentation = await callOpenAI({
-      apiKey,
-      model,
-      temperature: 0.15,
-      maxTokens: 1400,
-      messages: [
-        {
-          role: "system",
-          content: buildDocumentationPrompt(),
-        },
-        {
-          role: "user",
-          content: `Patientenbezeichnung: ${patientLabel}\n\nGesichertes Diktat:\n${normalizedDictation}`,
-        },
-      ],
-    });
-
-    const validated = validateDocumentation(documentation, patientLabel);
-
-    return response.status(200).json({
-      documentation: validated,
-      model,
-      promptVersion: PROMPT_VERSION,
-      source: "openai",
-    });
-  } catch (error) {
-    console.error("DocuVox AI processing failed:", error.message || "Unknown error");
-
-    return response.status(500).json({
-      error: "KI-Verarbeitung fehlgeschlagen",
-      documentation: null,
-      promptVersion: PROMPT_VERSION,
-    });
-  }
-}
-
-async function callOpenAI({ apiKey, model, messages, temperature, maxTokens }) {
-  const openAiResponse = await fetch(OPENAI_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature,
-      top_p: 0.3,
-      max_tokens: maxTokens,
-      presence_penalty: 0,
-      frequency_penalty: 0.1,
-    }),
-  });
-
-  const payload = await openAiResponse.json().catch(() => ({}));
-
-  if (!openAiResponse.ok) {
-    throw new Error(payload.error?.message || "OpenAI request failed");
-  }
-
-  const content = payload.choices?.[0]?.message?.content?.trim();
-
-  if (!content) {
-    throw new Error("OpenAI returned empty content");
-  }
-
-  return content;
-}
-
-function buildNormalizationPrompt() {
-  return `
-Du bist ein medizinischer Transkriptionsassistent für Physiotherapie-Diktate.
+const NORMALIZATION_PROMPT = `Du bist medizinischer Dokumentationsassistent für Physiotherapie-Diktate.
 
 AUFGABE:
-Sichere das Rohdiktat semantisch, bevor daraus eine Dokumentation erstellt wird.
+Normalisiere ein gesprochenes Rohdiktat zu einem stabilen klinischen Arbeits-Transkript.
+Dies ist SCHRITT 1. Es geht nur um Transkription, Dialekt-Normalisierung und Begriffsschutz.
+Du bist NICHT behandelnder Therapeut, NICHT Arzt und NICHT klinischer Interpretierer.
 
-WICHTIG:
-Du dokumentierst noch NICHT.
-Du interpretierst NICHT klinisch.
-Du ergänzt KEINE neuen Inhalte.
-Du stabilisierst nur Sprache, Fachbegriffe und offensichtliche Transkriptionsfehler.
+ZIEL DIESES SCHRITTS:
+Das Rohdiktat semantisch sichern, bevor es strukturiert wird.
+Die spätere Dokumentation darf nur auf diesem gesicherten Transkript beruhen.
+Wenn ein Wort unsicher ist, ist Bedeutungstreue wichtiger als elegante Fachsprache.
 
-ARBEITSWEISE:
-1. Schweizerdeutsch, Hochdeutsch und Mischsprache verstehen.
-2. Dialekt in fachliches Hochdeutsch übertragen.
-3. Füllwörter, Satzabbrüche und Wiederholungen reduzieren.
-4. Medizinische, physiotherapeutische, anatomische und trainingswissenschaftliche Fachbegriffe schützen.
-5. Offensichtliche Spracherkennungsfehler korrigieren, wenn der Kontext sehr klar ist.
-6. Patientennamen anonymisieren.
-7. Keine Diagnosen, Symptome, Defizite, Übungen, Reaktionen oder Ziele ergänzen.
+HAUPTPRIORITÄT:
+- diktatnah bleiben
+- Schweizerdeutsch und Umgangssprache vorsichtig in Standarddeutsch übertragen
+- Füllwörter und offensichtliche Wiederholungen leicht bereinigen
+- medizinische, physiotherapeutische, anatomische und trainingswissenschaftliche Fachbegriffe stabil halten
+- keine klinische Interpretation ergänzen
+- keine neuen Fakten ergänzen
 
-ABSOLUTE BEGRIFFSSCHUTZ-REGEL:
-Verändere Fachbegriffe niemals semantisch.
+SCHWEIZERDEUTSCH:
+Schweizerdeutsch zuerst semantisch stabilisieren.
+Dialekt darf niemals zu Fantasiebegriffen führen.
+Wenn ein lautlicher Begriff nach Physiotherapie, Medizin oder Training klingt, priorisiere den naheliegenden Fachbegriff.
+Beispiel: "vestibulär" darf niemals als Fantasiewort wie "Vesti Uhlíř" ausgegeben werden.
+
+Typische Schweizerdeutsch-/Mischsprache-Beispiele:
+- "hüt" -> "heute"
+- "gloffe" -> "gegangen" oder "gelaufen", je nach Kontext
+- "Schrittlängi" -> "Schrittlänge"
+- "Ganggschwindigkeit" -> "Gehgeschwindigkeit"
+- "UAGS" -> "Unterarmgehstützen"
+- "Stationsrunde" bleibt "Stationsrunde", niemals "Stadionrunde"
+
+FACHBEGRIFFSCHUTZ:
+Diese Begriffe niemals semantisch verändern:
+${PROTECTED_TERMS.map((term) => `- ${term}`).join("\n")}
+
+KRITISCHE VERWECHSLUNGEN VERMEIDEN:
+- hypoton ist nicht hyperton.
+- hyperton ist nicht hypoton.
+- Heimübungen sind nicht Atemübungen.
+- Atemübungen sind nicht Heimübungen.
+- Stationsrunde ist nicht Stadionrunde.
+- vestibulär ist ein medizinischer Begriff.
+- Mobilisation ist nicht Manipulation.
+- Detonisierung ist nicht Kräftigung.
+- Rollator ist nicht Gehstock.
+- Parese ist nicht Plegie.
+- Traktion ist nicht Training.
+- costale Atmung ist nicht allgemeine Atemübung.
+- Hüft-TEP ist nicht Ödem.
+- Ödem ist nicht Hüft-TEP.
+- UAGS bedeutet Unterarmgehstützen.
+- VKB bedeutet vorderes Kreuzband.
+- Kopfdrehungen sind nur Kopfdrehungen, keine automatische Unsicherheit.
+- Sit-to-Stand ist eine Übung/Transferform, kein automatischer Kraftbefund.
+- Dix-Hallpike bleibt Dix-Hallpike.
+- Dual-Task bleibt Dual-Task.
+
+NICHT ERLAUBT:
+- keine Diagnosen ergänzen
+- keine Symptome ergänzen
+- keine Defizite ergänzen
+- keine Übungen ergänzen
+- keine Reaktionen ergänzen
+- keine Verlaufsbeurteilung ergänzen
+- keine Empfehlung ergänzen
+- keine Interpretation von Übungen als Defizite
+- keine Formulierung wie "gut toleriert", wenn das nicht im Rohdiktat vorkommt
+- keine Formulierung wie "Fortschritt", wenn das nicht im Rohdiktat vorkommt
+
+AUSGABE:
+Gib ausschließlich das normalisierte Arbeits-Transkript zurück.
+Keine Überschriften.
+Keine Zusammenfassung.
+Keine Kommentare.`;
+
+const STRUCTURING_PROMPT = `Du bist medizinischer Dokumentationsassistent mit sehr guter physiotherapeutischer Dokumentationsroutine.
+
+AUFGABE:
+Erstelle aus einem normalisierten Arbeits-Transkript eine hochwertige physiotherapeutische Verlaufsdokumentation.
+Dies ist SCHRITT 2. Die ideale Ausgabe liegt zwischen wortwörtlichem Transkript und freier medizinischer Interpretation.
+Die Qualität soll möglichst nah an direkter ChatGPT-Qualität sein: klinisch sinnvoll zusammengefasst, physiotherapeutisch formuliert, natürlich lesbar und trotzdem diktatnah.
+
+ROLLE:
+Du bist NICHT behandelnder Therapeut.
+Du bist NICHT Arzt.
+Du bist NICHT kreativer Textgenerator.
+Du bist NICHT Formularparser.
+Du bist medizinischer Dokumentationsassistent.
+
+INTERNER ARBEITSABLAUF:
+1. DIKTAT VERSTEHEN:
+- Bedeutung erfassen.
+- medizinischen und physiotherapeutischen Kontext erkennen.
+- Schweizerdeutsch, Hochdeutsch und Mischsprache berücksichtigen.
+- relevante Therapieinhalte identifizieren.
+
+2. KLINISCHE RELEVANZ FILTERN:
+Priorisieren: Symptome, Schmerzen, Funktion, Mobilität, Kraft, Gleichgewicht, Gangbild, Atemsituation, neurologische Auffälligkeiten, konkrete Übungen, Verlauf, Reaktion, Heimübungen und Empfehlungen.
+Reduzieren: Füllwörter, Wiederholungen, spontane Satzabbrüche und sprachliche Unsicherheiten.
+
+3. SEMANTISCHE PLAUSIBILITÄT PRÜFEN:
+Du darfst sprachlich glätten, logisch ordnen, klinisch strukturieren und sehr leichte plausible Standardformulierungen ergänzen.
+Du darfst aber keine neuen Übungen, Symptome, Defizite, Diagnosen oder klinischen Interpretationen erfinden.
+
+4. NATÜRLICH KLINISCH FORMULIEREN:
+Die Dokumentation soll wie echte physiotherapeutische Verlaufsdokumentation klingen: kurz bis mittel ausführlich, prägnant, professionell, menschlich und nicht generisch.
+
+5. STRUKTURIERT AUSGEBEN:
+Immer im Pflichtformat mit vier Abschnitten.
+
+HAUPTPRIORITÄT:
+- nahe am Diktat bleiben
+- klinisch sinnvoll zusammenfassen
+- physiotherapeutische Fachsprache nutzen
+- natürlich und professionell formulieren
+- keine Halluzinationen
+- keine parserhaften Platzhalter
+- keine künstlich leeren Abschnitte
+
+ABSOLUTE REGEL:
+Nur dokumentieren, was wirklich erwähnt wurde.
+Keine neuen Symptome.
+Keine neuen Übungen.
+Keine neuen Defizite.
+Keine automatischen Verlaufsbeurteilungen.
+Keine automatischen Verbesserungen.
+Kein "gut toleriert", wenn nicht diktiert.
+Kein "motiviert", wenn nicht diktiert.
+Kein "Fortschritt", wenn nicht diktiert.
+Keine "verbesserte Beweglichkeit", wenn nicht diktiert.
+Keine "Unsicherheit", wenn nicht diktiert.
+Keine "Belastungslimitierung", wenn nicht diktiert.
+Kein Sturzrisiko, wenn nicht diktiert.
+Keine Schmerzen, wenn nicht diktiert.
+Keine Diagnosen, wenn nicht diktiert.
+Keine Therapieziele aufblasen.
+
+ÜBUNGEN SIND KEINE DEFIZITE:
+- "Gleichgewichtstraining mit Kopfdrehungen" bedeutet NICHT "Gangunsicherheit bei Kopfdrehungen".
+- "Dual-Task-Training" bedeutet NICHT "kognitive Einschränkungen".
+- "Sit-to-Stand" bedeutet NICHT "Kraftdefizit".
+- "Gangtraining" bedeutet NICHT "Sturzrisiko".
+- "Rollator" bedeutet NICHT "Sturzrisiko".
+- "Kopfdrehungen" sind nur Bestandteil der Übung, wenn keine Reaktion genannt wurde.
+- "Hüft-TEP" bedeutet NICHT automatisch Ödem.
+- "UAGS" als Hilfsmittel dokumentieren, nicht als neues Defizit interpretieren.
+- "Atemtherapie" bedeutet NICHT Dyspnoe, wenn Dyspnoe nicht diktiert wurde.
+
+REAKTION / VERLAUF:
+Dieser Abschnitt darf NICHT automatisch generiert werden.
+Wenn keine echte Reaktion oder Verlaufsangabe diktiert wurde, halte den Abschnitt sehr kurz und neutral.
+Nicht automatisch schreiben:
+- Therapie gut toleriert
+- gute Mitarbeit
+- Fortschritt sichtbar
+- Verbesserung
+- Umsetzung gelungen
+- Belastung toleriert
+
+Erlaubt, wenn durch das Transkript plausibel gestützt:
+- Therapie gut toleriert.
+- Gute Mitarbeit während der Therapie.
+- Übungen korrekt durchgeführt.
+- Mobilisation angenehm empfunden.
+- Aktive Bewegungsübungen durchgeführt.
+
+SCHWEIZERDEUTSCH UND FACHBEGRIFFE:
+Nutze das normalisierte Transkript als Quelle der Wahrheit.
+Fachbegriffe nicht semantisch verändern.
+Bei Unsicherheit Originalbegriff bevorzugen.
+Besonders schützen:
+${PROTECTED_TERMS.map((term) => `- ${term}`).join("\n")}
 
 Kritische Beispiele:
-- hypoton bleibt hypoton und wird niemals hyperton
-- hyperton bleibt hyperton und wird niemals hypoton
-- Heimübungen bleibt Heimübungen und wird niemals Atemübungen
-- Atemübungen bleibt Atemübungen und wird niemals Heimübungen
-- Stationsrunde bleibt Stationsrunde und wird niemals Stadionrunde
-- vestibulär bleibt vestibulär
-- Hüft-TEP bleibt Hüft-TEP
+- hypoton ≠ hyperton
+- Heimübungen ≠ Atemübungen
+- Stationsrunde ≠ Stadionrunde
+- vestibulär ≠ Fantasiebegriff
+- Hüft-TEP ≠ Ödem
 - UAGS = Unterarmgehstützen
 - VKB = vorderes Kreuzband
 - Dix-Hallpike bleibt Dix-Hallpike
 - Sit-to-Stand bleibt Sit-to-Stand
 - Dual-Task bleibt Dual-Task
-- Mobilisation ist nicht Manipulation
-- Detonisierung ist nicht Kräftigung
-- Parese ist nicht Plegie
-- Flexion ist nicht Extension
-- Abduktion ist nicht Adduktion
-- Innenrotation ist nicht Außenrotation
 
-SCHWEIZERDEUTSCH:
-- hüt = heute
-- gloffe = gegangen / gelaufen
-- Schrittlängi = Schrittlänge
-- Ganggschwindigkeit = Gehgeschwindigkeit
-- Ufsto = Aufstehen / Transfer
-- Wände = Wenden
-- UAGS = Unterarmgehstützen
-
-BEI UNSICHERHEIT:
-- Originalbegriff bevorzugen.
-- Neutral bleiben.
-- Keine neue medizinische Aussage erzeugen.
-
-Gib nur das semantisch gesicherte Diktat zurück.
-Keine Erklärung.
-Keine Tabellen.
-Keine Dokumentationsstruktur.
-`.trim();
-}
-
-function buildDocumentationPrompt() {
-  return `
-Du bist ein medizinischer Dokumentationsassistent für Physiotherapie.
-
-ROLLE:
-Du bist NICHT behandelnder Therapeut, NICHT Arzt und NICHT kreativer Interpretierer.
-Du strukturierst ein gesichertes Diktat in eine professionelle physiotherapeutische Verlaufsdokumentation.
-
-ZIEL:
-Die Ausgabe soll wie hochwertige, echte Physiotherapie-Dokumentation wirken:
-- diktatnah
-- natürlich
-- klinisch relevant
-- fachlich präzise
-- menschlich formuliert
+STIL:
+- natürlich und menschlich
+- weniger generisch
+- weniger KI-artig
+- physiotherapeutisch sauber
+- wie ein erfahrener Physiotherapeut mit hoher Dokumentationsqualität
+- je nach Inhalt passend: Sportphysio anders als Neuro, Akutspital, Manualtherapie oder Geriatrie
+- keine langen Sätze
+- keine Tabellen
+- keine Einleitung
+- keine Erklärung nach der Dokumentation
+- nicht technisch
 - nicht parserhaft
-- nicht generisch
-- ohne Halluzinationen
-
-WICHTIGSTER GRUNDSATZ:
-Das Diktat ist die Quelle der Wahrheit.
-
-DU DARFST:
-- Inhalte logisch strukturieren
-- Füllwörter entfernen
-- Grammatik glätten
-- Fachbegriffe korrekt schreiben
-- Umgangssprache vorsichtig in Physiotherapie-Fachsprache übertragen
-- relevante Inhalte klinisch sinnvoll sortieren
-- leichte, durch das Diktat gestützte Standardformulierungen verwenden
-
-DU DARFST NICHT:
-- neue Übungen ergänzen
-- neue Symptome ergänzen
-- neue Defizite ergänzen
-- Diagnosen hinzufügen
-- Schmerzen ergänzen
-- Hilfsmittel ergänzen
-- Reaktionen erfinden
-- Fortschritte erfinden
-- Risiken erfinden
-- Therapieziele aufblasen
-- Befunde aus Übungen ableiten
-- automatische Verlaufssätze schreiben
-
-ÜBUNG IST NICHT DEFIZIT:
-- Gleichgewichtstraining mit Kopfdrehungen bedeutet NICHT automatisch Gangunsicherheit bei Kopfdrehungen.
-- Sit-to-Stand bedeutet NICHT automatisch Kraftdefizit.
-- Dual-Task bedeutet NICHT automatisch kognitive Einschränkung.
-- Gangtraining bedeutet NICHT automatisch Sturzrisiko.
-- Rollator bedeutet NICHT automatisch Sturzrisiko.
-- Atemtherapie bedeutet NICHT automatisch Dyspnoe.
-
-FACHBEGRIFFSCHUTZ:
-Medizinische und physiotherapeutische Begriffe dürfen nicht semantisch verändert werden.
-Besonders schützen:
-hypoton, hyperton, vestibulär, Dix-Hallpike, UAGS, VKB, Sit-to-Stand, Dual-Task, ADL, ROM, MRC, PNF, Bobath, Freezing, Traktion, Mobilisation, Detonisierung, costale Atmung, Thoraxmobilisation, segmental, subokzipital, scapulothorakal, Teilbelastung, Hemiparese, Heimübungen, Atemübungen, Stationsrunde.
-
-REAKTION / VERLAUF:
-Nur dokumentieren, wenn im Diktat eine Reaktion, Toleranz, Mitarbeit, Veränderung, Schmerzreaktion oder Beobachtung erwähnt wird.
-Nicht automatisch schreiben:
-- gut toleriert
-- gute Mitarbeit
-- Fortschritt sichtbar
-- Verbesserung
-- Belastung gut toleriert
-
-AUSBLICK / EMPFEHLUNG:
-Nur naheliegende Fortführung der tatsächlich genannten Maßnahmen.
-Keine neuen Therapieziele, Risiken, Übungen oder Diagnosen ergänzen.
+- nicht überformalisiert
 
 VERBOTENE PLATZHALTER:
 Schreibe niemals:
-- Keine Angaben im Diktat
-- Keine weiteren Angaben dokumentiert
-- Nicht erwähnt
-- Keine Informationen vorhanden
-- Rest unauffällig
-- laut Patient
+- "keine Angaben"
+- "keine besonderen Angaben"
+- "nicht erwähnt"
+- "Rest unauffällig"
+- "laut Patient"
+- "keine weiteren Angaben im Diktat"
+- ähnliche Platzhalterformulierungen
 
-Wenn zu einem Abschnitt wenig Information vorhanden ist:
+Wenn Informationen fehlen:
 - Abschnitt kurz halten.
-- Nur vorhandene Inhalte verwenden.
-- Keine Platzhalter schreiben.
-- Wenn ein Abschnitt sonst leer wäre, formuliere sehr knapp mit Bezug auf vorhandene Inhalte, ohne neue Fakten zu erfinden.
+- vorhandene Information sinnvoll verteilen.
+- keine leeren Platzhalter erzeugen.
 
-AUSGABEFORMAT:
-Immer exakt:
+AUSGABEFORMAT IMMER EXAKT:
 
 Patient X
 
@@ -287,113 +284,343 @@ Patient X
 **Ausblick / Empfehlung**
 - ...
 
-FORMAT:
-- Überschriften fett mit Markdown
-- Inhalte als Bulletpoints
-- keine Tabellen
-- keine Einleitung
-- keine Erklärung danach
-- keine Markdown-Sterne in Bulletpoints
-- meist 1 bis 3 Bulletpoints pro Abschnitt
+FORMATREGELN:
+- Alle vier Überschriften müssen exakt vorhanden sein.
+- Überschriften fett im Markdown-Format.
+- Hinter Überschriften kein Doppelpunkt.
+- Inhalte als Bulletpoints.
+- Keine Fließtextblöcke.
+- Keine Patientennamen übernehmen.
+- Patient nur als Patient X bezeichnen.
 
-STIL:
-Kurz bis mittel ausführlich.
-Professionelle Physiotherapie-Verlaufsdokumentation.
-Nähe zum Diktat ist wichtiger als elegante Interpretation.
-Lieber vorsichtig und korrekt als ausführlich und falsch.
-`.trim();
-}
+ABSCHNITTSLOGIK:
+**Befund aktuell**:
+Nur aktueller Zustand, Symptome, Schmerzen, Mobilität, Tonus, Funktion, Diagnose oder Einschränkung, wenn diese im Transkript vorkommen.
+Nicht aus Behandlung ableiten.
 
-function normalizePatientLabel(patientLabel, patientNumber) {
-  const label = String(patientLabel || "").trim();
-  const match = label.match(/^Patient\s+\d+$/i);
+**Behandlung**:
+Konkrete diktierte Maßnahmen, Übungen, Hilfsmittel, Dosierungen, Gehstrecken, Wiederholungen, therapeutische Techniken und Fokus.
+Hier dürfen die meisten Inhalte stehen, wenn das Diktat vor allem Maßnahmen beschreibt.
 
-  if (match) {
-    return label.replace(/^patient/i, "Patient");
+**Reaktion / Verlauf**:
+Nur echte diktierte Reaktionen, Verlauf, Schmerzen, Mitarbeit, Toleranz, Veränderung oder Auffälligkeiten.
+Wenn nichts diktiert wurde: sehr kurz neutral halten.
+
+**Ausblick / Empfehlung**:
+Kurze, naheliegende Fortführung tatsächlich genannter Maßnahmen oder explizit genannte Empfehlung.
+Keine neuen Ziele, Risiken oder Defizite ergänzen.
+Wenn im Transkript nur eine Maßnahme genannt ist, Ausblick nur auf diese Maßnahme beziehen.
+Keine neuen Heimübungen, keine Sturzprophylaxe, keine Selbstständigkeitsziele ergänzen, wenn nicht erwähnt.
+Erlaubt, wenn durch das Diktat gestützt:
+- Fortführung des aktuellen Trainings empfohlen.
+- Weiterführung der Kräftigungsübungen empfohlen.
+- Fortführung des Gangtrainings mit genanntem Fokus.
+
+SELBSTKONTROLLE:
+Vor Ausgabe intern prüfen:
+1. Wurden Inhalte erfunden?
+2. Wurden Übungen als Defizite interpretiert?
+3. Blieben Fachbegriffe stabil?
+4. Blieb Schweizerdeutsch korrekt normalisiert?
+5. Ist die Dokumentation nah am Diktat?
+6. Klingt sie natürlich und nicht generisch?
+7. Sind alle vier Abschnitte vorhanden?
+8. Wurde Reaktion / Verlauf nicht automatisch erfunden?
+9. Wurde Ausblick nur aus diktierten Inhalten gebildet?
+10. Klingt es wie echte Physio-Doku und nicht wie ein Formular?
+Wenn etwas nicht erfüllt ist, intern korrigieren.
+
+Gib ausschließlich die fertige Dokumentation aus.`;
+
+const REPAIR_PROMPT = `${STRUCTURING_PROMPT}
+
+Zusatzauftrag:
+Die vorherige Antwort war leer, unvollständig oder nicht exakt im Pflichtformat.
+Repariere nur die Struktur.
+Erfinde weiterhin keine Inhalte.
+Alle vier Abschnitte müssen vorhanden sein.
+Wenn ein Abschnitt im Transkript keine echte Information hat, halte ihn minimal und neutral.
+Keine automatische Reaktion, keine automatische Verbesserung, keine automatische Toleranz formulieren.`;
+
+module.exports = async function handler(request, response) {
+  if (request.method !== "POST") {
+    return sendJson(response, 405, { error: "Method not allowed" });
   }
 
-  const number = Number.parseInt(patientNumber, 10);
-  if (Number.isFinite(number) && number > 0) {
-    return `Patient ${number}`;
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return sendJson(response, 500, {
+      error: "KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.",
+      details: "OPENAI_API_KEY ist nicht gesetzt.",
+    });
   }
 
-  return "Patient 1";
-}
+  try {
+    const body = await readJsonBody(request);
+    const text = String(body.text || "").trim();
+    const patientLabel = String(body.patientLabel || "").trim();
+    const patientNumber = extractPatientNumber(patientLabel);
 
-function validateDocumentation(documentation, patientLabel) {
-  const sections = [
-    "Befund aktuell",
-    "Behandlung",
-    "Reaktion / Verlauf",
-    "Ausblick / Empfehlung",
-  ];
+    if (!patientLabel || !Number.isInteger(patientNumber)) {
+      return sendJson(response, 400, {
+        error: "KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.",
+        details: "Body muss text und patientLabel enthalten.",
+      });
+    }
 
-  const cleaned = String(documentation || "")
-    .replace(/\r/g, "")
-    .replace(/\*\*(Befund aktuell|Behandlung|Reaktion \/ Verlauf|Ausblick \/ Empfehlung):\*\*/g, "**$1**")
-    .trim();
+    if (isNearlyEmptyText(text)) {
+      return sendJson(response, 400, {
+        error: "KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.",
+        details: "Das Rohdiktat ist zu kurz für eine fachlich saubere Dokumentation.",
+      });
+    }
 
-  const withoutPatient = cleaned.replace(/^Patient\s+\d+\s*/i, "").trim();
-  const parsed = {};
-  let currentSection = null;
-
-  withoutPatient.split("\n").forEach((line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-
-    const heading = sections.find((section) => {
-      const headingPattern = new RegExp(`^\\*\\*${escapeRegExp(section)}:?\\*\\*$|^${escapeRegExp(section)}:?$`, "i");
-      return headingPattern.test(trimmed);
+    const documentation = await createDocumentation({
+      apiKey,
+      text,
+      patientLabel: `Patient ${patientNumber}`,
+      patientNumber,
     });
 
-    if (heading) {
-      currentSection = heading;
-      parsed[currentSection] = parsed[currentSection] || [];
-      return;
-    }
+    return sendJson(response, 200, { documentation });
+  } catch (error) {
+    console.error("DocuVox AI processing failed:", error);
+    return sendJson(response, 500, {
+      error: "KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.",
+      details: error.message || "OpenAI-Anfrage fehlgeschlagen.",
+    });
+  }
+};
 
-    if (currentSection) {
-      const bullet = trimmed.replace(/^[-•]\s*/, "").trim();
-      if (bullet && !isForbiddenPlaceholder(bullet)) {
-        parsed[currentSection].push(bullet);
-      }
-    }
+async function createDocumentation({ apiKey, text, patientLabel, patientNumber }) {
+  const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
+  const normalizedTranscript = await requestOpenAi({
+    apiKey,
+    model,
+    instructions: NORMALIZATION_PROMPT,
+    input: createNormalizationInput(text),
+    maxOutputTokens: 900,
   });
 
-  let output = `${patientLabel}\n\n`;
-
-  sections.forEach((section, index) => {
-    const bullets = (parsed[section] || []).filter(Boolean);
-
-    output += `**${section}**\n`;
-
-    if (bullets.length > 0) {
-      output += bullets.map((item) => `- ${item}`).join("\n");
-    } else {
-      output += "- Inhalt aus dem Diktat knapp strukturiert; keine zusätzliche Interpretation ergänzt.";
-    }
-
-    if (index < sections.length - 1) {
-      output += "\n\n";
-    }
+  const first = await requestOpenAi({
+    apiKey,
+    model,
+    instructions: STRUCTURING_PROMPT.replaceAll("Patient X", patientLabel),
+    input: createStructuringInput(normalizedTranscript, patientLabel),
+    maxOutputTokens: 1400,
   });
 
-  return output.trim();
+  if (hasCompleteSections(first)) {
+    return normalizeDocumentation(first, patientNumber);
+  }
+
+  const repaired = await requestOpenAi({
+    apiKey,
+    model,
+    instructions: REPAIR_PROMPT.replaceAll("Patient X", patientLabel),
+    input: `${createStructuringInput(normalizedTranscript, patientLabel)}\n\nUnvollständige vorherige Antwort:\n${first}`,
+    maxOutputTokens: 1400,
+  });
+
+  return normalizeDocumentation(repaired, patientNumber);
 }
 
-function isForbiddenPlaceholder(text) {
-  const normalized = text.toLowerCase();
-  return [
-    "keine angaben",
-    "keine weiteren angaben",
-    "nicht erwähnt",
-    "keine informationen",
-    "rest unauffällig",
-    "keine angaben im diktat",
-    "keine weiteren angaben dokumentiert",
-  ].some((phrase) => normalized.includes(phrase));
+async function requestOpenAi({ apiKey, model, instructions, input, maxOutputTokens = 1400 }) {
+  const requestBody = {
+    model,
+    instructions,
+    input,
+    max_output_tokens: maxOutputTokens,
+  };
+
+  if (model.startsWith("gpt-5")) {
+    requestBody.reasoning = { effort: "low" };
+  } else {
+    requestBody.temperature = 0.1;
+    requestBody.top_p = 0.4;
+  }
+
+  const openAiResponse = await fetch(OPENAI_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  const data = await openAiResponse.json().catch(() => ({}));
+  if (!openAiResponse.ok) {
+    throw new Error(data.error?.message || `OpenAI request failed with ${openAiResponse.status}`);
+  }
+
+  const outputText = extractOutputText(data).trim();
+  if (!outputText) {
+    throw new Error("OpenAI returned an empty documentation");
+  }
+
+  return outputText;
+}
+
+function createNormalizationInput(text) {
+  return `Rohdiktat:
+${text}
+
+Normalisiere dieses Diktat vorsichtig zu einem stabilen Arbeits-Transkript.
+Schweizerdeutsch in Standarddeutsch übertragen, aber Bedeutung nicht verändern.
+Fachbegriffe schützen und keine Inhalte ergänzen.
+Typische Schweizer Begriffe beachten: hüt = heute, gloffe = gegangen/gelaufen, Schrittlängi = Schrittlänge, Ganggschwindigkeit = Gehgeschwindigkeit, UAGS = Unterarmgehstützen.
+Kritische Begriffe nicht verwechseln: hypoton/hyperton, Heimübungen/Atemübungen, Stationsrunde/Stadionrunde, vestibulär/Fantasiebegriff, Hüft-TEP/Ödem, Dix-Hallpike, Sit-to-Stand, Dual-Task.
+Nur das Arbeits-Transkript ausgeben.`;
+}
+
+function createStructuringInput(normalizedTranscript, patientLabel) {
+  return `Patient: ${patientLabel}
+
+Normalisiertes Arbeits-Transkript:
+${normalizedTranscript}
+
+Aufgabe:
+Strukturiere dieses Transkript in das Pflichtformat.
+Bleibe maximal diktatnah.
+Keine medizinische Interpretation.
+Keine neuen Symptome, Defizite, Übungen, Reaktionen, Verbesserungen oder Ziele ergänzen.
+Übungen nicht als Defizite interpretieren.
+Rollator nicht als Sturzrisiko interpretieren.
+Sit-to-Stand nicht als Kraftdefizit interpretieren.
+Dual-Task nicht als kognitive Einschränkung interpretieren.
+Reaktion / Verlauf nur ausgeben, wenn echte Angaben im Transkript vorhanden sind; sonst minimal neutral halten.
+Ausblick / Empfehlung nur als vorsichtige Fortführung der diktierten Inhalte formulieren.
+Gib nur die fertige Dokumentation aus.`;
+}
+
+function extractOutputText(data) {
+  if (typeof data.output_text === "string") return data.output_text;
+
+  return (data.output || [])
+    .flatMap((item) => item.content || [])
+    .map((content) => content.text || "")
+    .join("\n");
+}
+
+function normalizeDocumentation(text, patientNumber) {
+  const sections = Object.fromEntries(
+    SECTION_ORDER.map((section) => [section, extractSection(text, section)])
+  );
+
+  return `Patient ${patientNumber}
+
+**Befund aktuell**
+${ensureBullets(sections["Befund aktuell"], SECTION_DEFAULTS["Befund aktuell"])}
+
+**Behandlung**
+${ensureBullets(sections.Behandlung, SECTION_DEFAULTS.Behandlung)}
+
+**Reaktion / Verlauf**
+${ensureBullets(sections["Reaktion / Verlauf"], SECTION_DEFAULTS["Reaktion / Verlauf"])}
+
+**Ausblick / Empfehlung**
+${ensureBullets(sections["Ausblick / Empfehlung"], SECTION_DEFAULTS["Ausblick / Empfehlung"])}`;
+}
+
+function extractSection(text, sectionName) {
+  const escaped = escapeRegExp(sectionName);
+  const nextSections = SECTION_ORDER
+    .filter((name) => name !== sectionName)
+    .map(escapeRegExp)
+    .join("|");
+  const pattern = new RegExp(
+    `(?:^|\\n)\\s*(?:[-•]\\s*)?(?:\\*\\*)?${escaped}\\s*:?(?:\\*\\*)?\\s*([\\s\\S]*?)(?=\\n\\s*(?:[-•]\\s*)?(?:\\*\\*)?(?:${nextSections})\\s*:?(?:\\*\\*)?|$)`,
+    "i"
+  );
+  const match = String(text || "").match(pattern);
+
+  return sanitizeSection(match?.[1] || "");
+}
+
+function sanitizeSection(value) {
+  return String(value || "")
+    .replace(/\b(wir haben dann|also|eben|eigentlich|quasi|sozusagen)\b/gi, "")
+    .replace(/\b(Herr|Frau)\s+[A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)+/g, "Patient")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function ensureText(value, fallback) {
+  const clean = sanitizeSection(value);
+  if (!clean || clean === "..." || clean.length < 4) return fallback;
+  return /[.!?]$/.test(clean) ? clean : `${clean}.`;
+}
+
+function ensureBullets(value, fallback) {
+  const clean = sanitizeSection(value);
+  const source = !clean || clean === "..." || clean.length < 4 ? fallback : clean;
+  const lines = source
+    .split(/\n+/)
+    .map((line) => line.replace(/^[-•*]\s*/, "").trim())
+    .filter(Boolean);
+
+  if (lines.length) {
+    return lines.map((line) => `- ${ensureText(line, fallback)}`).join("\n");
+  }
+
+  return `- ${ensureText(source, fallback)}`;
+}
+
+function isNearlyEmptyText(text) {
+  const clean = String(text || "")
+    .replace(/[.,;:!?()\-[\]{}]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return clean.length < 8 || clean.split(" ").filter(Boolean).length < 2;
+}
+
+function hasCompleteSections(text) {
+  return SECTION_ORDER.every((section) => {
+    const value = extractSection(text, section);
+    return value.length >= 4 && value !== "...";
+  });
+}
+
+function extractPatientNumber(patientLabel) {
+  const match = String(patientLabel || "").match(/\d+/);
+  return match ? Number(match[0]) : NaN;
 }
 
 function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function readJsonBody(request) {
+  if (request.body && typeof request.body === "object") return request.body;
+  if (typeof request.body === "string") return JSON.parse(request.body || "{}");
+
+  return new Promise((resolve, reject) => {
+    let raw = "";
+    request.on("data", (chunk) => {
+      raw += chunk;
+      if (raw.length > 50_000) {
+        reject(new Error("Request body too large"));
+        request.destroy();
+      }
+    });
+    request.on("end", () => {
+      try {
+        resolve(JSON.parse(raw || "{}"));
+      } catch (error) {
+        reject(error);
+      }
+    });
+    request.on("error", reject);
+  });
+}
+
+function sendJson(response, statusCode, body) {
+  response.writeHead(statusCode, {
+    "Content-Type": "application/json;charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  response.end(JSON.stringify(body));
 }
