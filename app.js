@@ -29,6 +29,7 @@ const els = {
   stopDictationButton: document.querySelector("#stopDictationButton"),
   speechStatus: document.querySelector("#speechStatus"),
   rawText: document.querySelector("#rawText"),
+  editLabel: document.querySelector("label[for='rawText']"),
   finalDoc: document.querySelector("#finalDoc"),
   editPanel: document.querySelector("#editPanel"),
   editButton: document.querySelector("#editButton"),
@@ -126,9 +127,9 @@ function bindEvents() {
   });
   els.startDictationButton.addEventListener("click", startDictation);
   els.stopDictationButton.addEventListener("click", stopDictation);
-  els.createDocButton.addEventListener("click", createDocumentation);
+  els.createDocButton.addEventListener("click", handleEditPanelAction);
   els.retryButton.addEventListener("click", createDocumentation);
-  els.editButton.addEventListener("click", () => els.editPanel.classList.toggle("hidden"));
+  els.editButton.addEventListener("click", toggleEditPanel);
   els.copyDocButton.addEventListener("click", copyCurrentDocumentation);
   els.nextPatientButton.addEventListener("click", goToNextPatient);
   els.backBottomButton.addEventListener("click", showList);
@@ -139,7 +140,7 @@ function bindEvents() {
   els.newDayButton.addEventListener("click", confirmNewDay);
   els.restoreStartButton.addEventListener("click", restoreLastDayBackup);
   els.restoreListButton.addEventListener("click", restoreLastDayBackup);
-  els.rawText.addEventListener("input", saveCurrentRawText);
+  els.rawText.addEventListener("input", handleEditTextInput);
 }
 
 async function bootApp() {
@@ -366,6 +367,7 @@ function createDayList(event) {
       id: index + 1,
       rawText: "",
       documentation: "",
+      documentationEditCount: 0,
       status: "open",
     })),
   };
@@ -472,6 +474,7 @@ function openPatient(patientId) {
   els.patientTitle.textContent = `Patient ${patient.id}`;
   els.patientPosition.textContent = `${patient.id} von ${state.patients.length}`;
   els.rawText.value = patient.rawText || "";
+  setEditPanelMode(patient.documentation ? "documentation" : "raw");
   renderDocumentation(patient.documentation);
   els.editPanel.classList.add("hidden");
   els.errorState.classList.add("hidden");
@@ -491,6 +494,8 @@ function startDictation() {
 
   const patient = getCurrentPatient();
   if (patient) {
+    setEditPanelMode("raw");
+    els.rawText.value = patient.rawText || "";
     patient.status = "active";
     state.activePatientId = patient.id;
     saveState();
@@ -538,6 +543,7 @@ async function createDocumentation() {
   const patient = getCurrentPatient();
   if (!patient) return;
 
+  setEditPanelMode("raw");
   const rawText = els.rawText.value.trim();
   if (!rawText) {
     toast("Bitte zuerst ein Diktat eingeben.");
@@ -551,6 +557,7 @@ async function createDocumentation() {
     const documentation = await createAiDocumentation(rawText, `Patient ${patient.id}`);
     patient.rawText = rawText;
     patient.documentation = documentation;
+    patient.documentationUpdatedAt = new Date().toISOString();
     patient.status = "done";
     renderDocumentation(documentation);
     showDictationSuccess();
@@ -562,12 +569,91 @@ async function createDocumentation() {
     els.copyDocButton.querySelector("span").textContent = "Dokumentation kopieren";
     updateDetailActions();
     saveState();
+    setEditPanelMode("documentation");
     toast("KI-Dokumentation erstellt.");
   } catch (error) {
     showAiError(error.message);
   } finally {
     setProcessingState(false);
   }
+}
+
+function toggleEditPanel() {
+  const patient = getCurrentPatient();
+  if (!patient) return;
+
+  const shouldOpen = els.editPanel.classList.contains("hidden");
+  if (!shouldOpen) {
+    els.editPanel.classList.add("hidden");
+    return;
+  }
+
+  setEditPanelMode(patient.documentation ? "documentation" : "raw");
+  els.editPanel.classList.remove("hidden");
+  window.setTimeout(() => els.rawText.focus(), 0);
+}
+
+function setEditPanelMode(mode) {
+  const patient = getCurrentPatient();
+  const editMode = mode === "documentation" && patient?.documentation ? "documentation" : "raw";
+
+  els.editPanel.dataset.mode = editMode;
+  if (editMode === "documentation") {
+    els.editLabel.textContent = "Fertige Dokumentation bearbeiten";
+    els.rawText.value = patient.documentation;
+    els.rawText.placeholder = "Fertige Dokumentation bearbeiten.";
+    els.createDocButton.textContent = "Änderungen speichern";
+  } else {
+    els.editLabel.textContent = "Rohdiktat";
+    els.rawText.value = patient?.rawText || "";
+    els.rawText.placeholder = "Diktat erscheint hier. Du kannst den Text auch direkt eintippen.";
+    els.createDocButton.textContent = "Doku erstellen und kopieren";
+  }
+}
+
+function handleEditPanelAction() {
+  if (els.editPanel.dataset.mode === "documentation") {
+    saveEditedDocumentation();
+    return;
+  }
+
+  createDocumentation();
+}
+
+function saveEditedDocumentation() {
+  const patient = getCurrentPatient();
+  if (!patient) return;
+
+  const editedDocumentation = normalizeEditedDocumentation(els.rawText.value, patient.id);
+  if (!editedDocumentation) {
+    toast("Bitte eine Dokumentation eingeben.");
+    return;
+  }
+
+  patient.documentation = editedDocumentation;
+  patient.status = "done";
+  patient.documentationEditCount = (patient.documentationEditCount || 0) + 1;
+  patient.documentationUpdatedAt = new Date().toISOString();
+  patient.lastManualEditAt = new Date().toISOString();
+  renderDocumentation(patient.documentation);
+  els.copyState.classList.add("hidden");
+  els.aiState.innerHTML = "<span></span>Bearbeitet";
+  els.aiState.classList.remove("hidden");
+  updateDetailActions();
+  saveState();
+  els.editPanel.classList.add("hidden");
+  toast("Dokumentation gespeichert.");
+}
+
+function normalizeEditedDocumentation(value, patientId) {
+  const clean = String(value || "")
+    .replace(/\r/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  if (!clean) return "";
+  if (/^Patient\s+\d+/i.test(clean)) return clean;
+  return `Patient ${patientId}\n\n${clean}`;
 }
 
 async function createAiDocumentation(rawText, patientLabel) {
@@ -649,6 +735,11 @@ async function copyPatientDocumentation(patientId, button) {
 
   const copied = await copyDocumentation(patient.documentation, patient.id, `Patient ${patient.id} kopiert.`);
   if (copied && button) showCopyButtonSuccess(button);
+}
+
+function handleEditTextInput() {
+  if (els.editPanel.dataset.mode === "documentation") return;
+  saveCurrentRawText();
 }
 
 function saveCurrentRawText() {
