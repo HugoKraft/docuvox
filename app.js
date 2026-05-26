@@ -1,325 +1,307 @@
-const STORAGE_PREFIX = "docuvox_state_";
-const BACKUP_PREFIX = "docuvox_last_day_backup_";
-const SESSION_KEY = "docuvox_active_user";
-const USERS_KEY = "docuvox_users";
-const MODEL_STATUS_LABEL = "KI aktiv";
-const PROCESSING_MESSAGE = "Dokumentation wird erstellt ...";
-const PROCESSING_SUBTEXT = "Diktat wird strukturiert und fachlich geprüft.";
-const ERROR_MESSAGE = "Dokumentation konnte nicht erstellt werden. Bitte erneut versuchen.";
-const COPY_RESET_DELAY = 2000;
+const STORAGE_KEY = "docuvox-day-v3";
+const BACKUP_KEY = "docuvox-last-day-backup-v1";
+const USERS_KEY = "docuvox-users-v1";
+const SESSION_KEY = "docuvox-session-user-v1";
+const USER_STATE_PREFIX = "docuvox_state_";
+const USER_BACKUP_PREFIX = "docuvox_backup_";
 
-let state = {
-  userId: null,
-  username: "",
-  dayId: createDayId(),
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-  patientCount: 0,
-  patients: [],
-  activePatientId: null,
-  view: "setup",
-};
-
+let currentUser = loadSessionUser();
+let state = createEmptyState();
+let currentPatientId = null;
 let recognition = null;
 let isRecording = false;
-let currentPatientId = null;
 let finalTranscript = "";
-let interimTranscript = "";
-let selectedCount = null;
-let copyResetTimer = null;
-let allCopyResetTimer = null;
-let editMode = false;
 
 const els = {
-  app: document.getElementById("app"),
-  loginView: document.getElementById("login-view"),
-  setupView: document.getElementById("setup-view"),
-  listView: document.getElementById("list-view"),
-  detailView: document.getElementById("detail-view"),
-  summaryView: document.getElementById("summary-view"),
-  usernameInput: document.getElementById("username-input"),
-  passwordInput: document.getElementById("password-input"),
-  loginButton: document.getElementById("login-button"),
-  demoUserButton: document.getElementById("demo-user-button"),
-  loginError: document.getElementById("login-error"),
-  activeUser: document.getElementById("active-user"),
-  logoutButton: document.getElementById("logout-button"),
-  countButtons: document.querySelectorAll(".count-button"),
-  customCount: document.getElementById("custom-count"),
-  createListButton: document.getElementById("create-list"),
-  restoreBackupButton: document.getElementById("restore-backup"),
-  resetDayButton: document.getElementById("reset-day"),
-  progressText: document.getElementById("progress-text"),
-  progressBar: document.getElementById("progress-bar"),
-  patientList: document.getElementById("patient-list"),
-  allCopyButton: document.getElementById("copy-all"),
-  showSummaryButton: document.getElementById("show-summary"),
-  detailTitle: document.getElementById("detail-title"),
-  detailCounter: document.getElementById("detail-counter"),
-  micButton: document.getElementById("mic-button"),
-  micIcon: document.getElementById("mic-icon"),
-  micText: document.getElementById("mic-text"),
-  stopButton: document.getElementById("stop-button"),
-  processingBox: document.getElementById("processing-box"),
-  processingText: document.getElementById("processing-text"),
-  processingSubtext: document.getElementById("processing-subtext"),
-  errorBox: document.getElementById("error-box"),
-  retryButton: document.getElementById("retry-button"),
-  documentationCard: document.getElementById("documentation-card"),
-  documentationOutput: document.getElementById("documentation-output"),
-  editPanel: document.getElementById("edit-panel"),
-  editTextarea: document.getElementById("edit-textarea"),
-  editSaveButton: document.getElementById("edit-save"),
-  editCancelButton: document.getElementById("edit-cancel"),
-  editLabel: document.getElementById("edit-label"),
-  editButton: document.getElementById("edit-button"),
-  copyButton: document.getElementById("copy-button"),
-  copyButtonText: document.getElementById("copy-button-text"),
-  nextButton: document.getElementById("next-button"),
-  listButton: document.getElementById("list-button"),
-  summaryList: document.getElementById("summary-list"),
-  summaryCopyAll: document.getElementById("summary-copy-all"),
-  summaryBackButton: document.getElementById("summary-back"),
+  startView: document.querySelector("#startView"),
+  listView: document.querySelector("#listView"),
+  detailView: document.querySelector("#detailView"),
+  allDocsView: document.querySelector("#allDocsView"),
+  dayForm: document.querySelector("#dayForm"),
+  patientCount: document.querySelector("#patientCount"),
+  patientGrid: document.querySelector("#patientGrid"),
+  dayTitle: document.querySelector("#dayTitle"),
+  progressText: document.querySelector("#progressText"),
+  progressBar: document.querySelector("#progressBar"),
+  patientTitle: document.querySelector("#patientTitle"),
+  patientPosition: document.querySelector("#patientPosition"),
+  startDictationButton: document.querySelector("#startDictationButton"),
+  stopDictationButton: document.querySelector("#stopDictationButton"),
+  speechStatus: document.querySelector("#speechStatus"),
+  rawText: document.querySelector("#rawText"),
+  editLabel: document.querySelector("label[for='rawText']"),
+  finalDoc: document.querySelector("#finalDoc"),
+  editPanel: document.querySelector("#editPanel"),
+  editButton: document.querySelector("#editButton"),
+  copyDocButton: document.querySelector("#copyDocButton"),
+  createDocButton: document.querySelector("#createDocButton"),
+  retryButton: document.querySelector("#retryButton"),
+  errorState: document.querySelector("#errorState"),
+  aiState: document.querySelector("#aiState"),
+  copyState: document.querySelector("#copyState"),
+  nextPatientButton: document.querySelector("#nextPatientButton"),
+  backBottomButton: document.querySelector("#backBottomButton"),
+  backFromAllButton: document.querySelector("#backFromAllButton"),
+  showAllButton: document.querySelector("#showAllButton"),
+  copyAllButton: document.querySelector("#copyAllButton"),
+  copyAllTopButton: document.querySelector("#copyAllTopButton"),
+  newDayButton: document.querySelector("#newDayButton"),
+  allDocsText: document.querySelector("#allDocsText"),
+  toast: document.querySelector("#toast"),
 };
 
-document.addEventListener("DOMContentLoaded", () => {
-  setupGeneratedUi();
-  bindEvents();
-  initSpeech();
-  restoreSession();
-  registerServiceWorker();
-});
+setupGeneratedUi();
+bindEvents();
+initSpeech();
+registerServiceWorker();
+bootApp();
 
 function setupGeneratedUi() {
-  if (!els.processingBox.querySelector(".processing-spinner")) {
-    const spinner = document.createElement("div");
-    spinner.className = "processing-spinner";
-    spinner.setAttribute("aria-hidden", "true");
-    els.processingBox.prepend(spinner);
-  }
+  els.loginView = document.createElement("section");
+  els.loginView.className = "view login-view hidden";
+  els.loginView.id = "loginView";
+  els.loginView.innerHTML = `
+    <div class="login-card">
+      <p class="eyebrow">Login</p>
+      <h2>Bei DocuVox anmelden</h2>
+      <p class="login-note">MVP only - spaeter sichere Authentifizierung und Cloud-Sync.</p>
+      <form id="loginForm" class="login-form">
+        <label class="field-label" for="loginUsername">Benutzername</label>
+        <input id="loginUsername" type="text" autocomplete="username" placeholder="z. B. hugo" required />
+        <label class="field-label" for="loginPassword">Passwort</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Passwort" required />
+        <button class="primary-button" type="submit">Einloggen</button>
+        <button class="secondary-button" id="demoUserButton" type="button">Demo-Nutzer erstellen</button>
+      </form>
+    </div>
+  `;
+  els.startView.parentElement.insertBefore(els.loginView, els.startView);
+  els.loginForm = els.loginView.querySelector("#loginForm");
+  els.loginUsername = els.loginView.querySelector("#loginUsername");
+  els.loginPassword = els.loginView.querySelector("#loginPassword");
+  els.demoUserButton = els.loginView.querySelector("#demoUserButton");
 
-  if (!document.querySelector(".pilot-privacy-notice")) {
-    els.privacyNotice = document.createElement("div");
-    els.privacyNotice.className = "pilot-privacy-notice";
-    els.privacyNotice.innerHTML = `
-      <strong>Pilotphase:</strong>
-      Bitte keine vollständigen Patientennamen verwenden. Nutzen Sie Initialen oder anonymisierte Bezeichnungen.
-    `;
-    document.querySelector(".app-header").after(els.privacyNotice);
-  }
+  els.userState = document.createElement("div");
+  els.userState.className = "user-state hidden";
+  els.userState.innerHTML = `
+    <span id="currentUserLabel"></span>
+    <button id="logoutButton" type="button">Abmelden</button>
+  `;
+  document.querySelector(".app-header").append(els.userState);
+  els.currentUserLabel = els.userState.querySelector("#currentUserLabel");
+  els.logoutButton = els.userState.querySelector("#logoutButton");
 
-  els.processingText.textContent = PROCESSING_MESSAGE;
-  els.processingSubtext.textContent = PROCESSING_SUBTEXT;
+  els.processingState = document.createElement("div");
+  els.processingState.className = "processing-state hidden";
+  els.processingState.setAttribute("role", "status");
+  els.processingState.setAttribute("aria-live", "polite");
+  els.processingState.innerHTML = `
+    <div class="processing-ring" aria-hidden="true"></div>
+    <div>
+      <strong>Dokumentation wird erstellt ...</strong>
+      <p>Diktat wird strukturiert und fachlich geprüft.</p>
+    </div>
+  `;
+  els.finalDoc.parentElement.insertBefore(els.processingState, els.finalDoc);
+
+  els.restoreStartButton = document.createElement("button");
+  els.restoreStartButton.className = "backup-button hidden";
+  els.restoreStartButton.type = "button";
+  els.restoreStartButton.textContent = "Letzte Tagesliste wiederherstellen";
+  els.startView.querySelector(".hero-card").append(els.restoreStartButton);
+
+  els.restoreListButton = document.createElement("button");
+  els.restoreListButton.className = "backup-button hidden";
+  els.restoreListButton.type = "button";
+  els.restoreListButton.textContent = "Letzte Tagesliste wiederherstellen";
+  els.listView.insertBefore(els.restoreListButton, els.newDayButton);
 }
 
 function bindEvents() {
-  els.loginButton.addEventListener("click", handleLogin);
+  els.loginForm.addEventListener("submit", handleLogin);
   els.demoUserButton.addEventListener("click", createDemoUser);
   els.logoutButton.addEventListener("click", logout);
-
-  [els.usernameInput, els.passwordInput].forEach((input) => {
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") handleLogin();
-    });
-  });
-
-  els.countButtons.forEach((button) => {
+  els.dayForm.addEventListener("submit", createDayList);
+  document.querySelectorAll("[data-count]").forEach((button) => {
     button.addEventListener("click", () => pickCount(button));
   });
-
-  els.customCount.addEventListener("input", () => {
-    selectedCount = Number.parseInt(els.customCount.value, 10) || null;
-    els.countButtons.forEach((button) => button.classList.remove("is-selected"));
-  });
-
-  els.createListButton.addEventListener("click", createDayList);
-  els.restoreBackupButton.addEventListener("click", restoreLastBackup);
-  els.resetDayButton.addEventListener("click", requestNewDayList);
-  els.allCopyButton.addEventListener("click", copyAllDocumentation);
-  els.showSummaryButton.addEventListener("click", () => showView("summary"));
-
-  els.patientList.addEventListener("click", (event) => {
-    const card = event.target.closest("[data-patient-id]");
-    if (!card) return;
-
-    const patientId = Number.parseInt(card.dataset.patientId, 10);
-    const actionButton = event.target.closest("[data-action]");
-
-    if (actionButton?.dataset.action === "copy") {
-      event.stopPropagation();
-      copyPatientDocumentation(patientId, actionButton);
-      return;
-    }
-
-    if (actionButton?.dataset.action === "delete") {
-      event.stopPropagation();
-      deletePatientEntry(patientId);
-      return;
-    }
-
-    openPatient(patientId);
-  });
-
-  els.summaryList.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-summary-copy]");
-    if (!button) return;
-    copyPatientDocumentation(Number.parseInt(button.dataset.summaryCopy, 10), button);
-  });
-
-  els.micButton.addEventListener("click", startDictation);
-  els.stopButton.addEventListener("click", () => stopDictation(true));
-  els.retryButton.addEventListener("click", () => createDocumentation(getActivePatient()));
-  els.editButton.addEventListener("click", () => toggleEditPanel(true));
-  els.editSaveButton.addEventListener("click", saveEditedDocumentation);
-  els.editCancelButton.addEventListener("click", () => toggleEditPanel(false));
-  els.copyButton.addEventListener("click", () => copyPatientDocumentation(state.activePatientId, els.copyButton));
-  els.nextButton.addEventListener("click", goToNextPatient);
-  els.listButton.addEventListener("click", () => showView("list"));
-  els.summaryCopyAll.addEventListener("click", copyAllDocumentation);
-  els.summaryBackButton.addEventListener("click", () => showView("list"));
+  els.startDictationButton.addEventListener("click", startDictation);
+  els.stopDictationButton.addEventListener("click", stopDictation);
+  els.createDocButton.addEventListener("click", handleEditPanelAction);
+  els.retryButton.addEventListener("click", createDocumentation);
+  els.editButton.addEventListener("click", toggleEditPanel);
+  els.copyDocButton.addEventListener("click", copyCurrentDocumentation);
+  els.nextPatientButton.addEventListener("click", goToNextPatient);
+  els.backBottomButton.addEventListener("click", showList);
+  els.backFromAllButton.addEventListener("click", showList);
+  els.showAllButton.addEventListener("click", showAllDocs);
+  els.copyAllButton.addEventListener("click", copyAllDocs);
+  els.copyAllTopButton.addEventListener("click", copyAllDocs);
+  els.newDayButton.addEventListener("click", confirmNewDay);
+  els.restoreStartButton.addEventListener("click", restoreLastDayBackup);
+  els.restoreListButton.addEventListener("click", restoreLastDayBackup);
+  els.rawText.addEventListener("input", handleEditTextInput);
 }
 
-function restoreSession() {
-  const activeUser = localStorage.getItem(SESSION_KEY);
-  if (!activeUser) {
+async function bootApp() {
+  if (!currentUser) {
     showLogin();
     return;
   }
 
-  const users = getUsers();
-  const user = users[activeUser];
-  if (!user) {
-    localStorage.removeItem(SESSION_KEY);
-    showLogin();
-    return;
-  }
-
-  state.userId = activeUser;
-  state.username = user.username;
   state = loadState();
-  showAuthenticatedApp();
+  updateUserUi();
+  renderInitialView();
 }
 
 function showLogin() {
-  els.app.classList.add("is-logged-out");
-  els.loginView.hidden = false;
-  els.setupView.hidden = true;
-  els.listView.hidden = true;
-  els.detailView.hidden = true;
-  els.summaryView.hidden = true;
-  els.activeUser.textContent = "";
-  els.logoutButton.hidden = true;
+  currentUser = null;
+  currentPatientId = null;
+  state = createEmptyState();
+  localStorage.removeItem(SESSION_KEY);
+  updateUserUi();
+  showView("login");
+  window.setTimeout(() => els.loginUsername.focus(), 0);
 }
 
-function showAuthenticatedApp() {
-  els.app.classList.remove("is-logged-out");
-  els.loginView.hidden = true;
-  els.logoutButton.hidden = false;
-  els.activeUser.textContent = state.username ? `Angemeldet: ${state.username}` : "";
-  updateBackupButton();
-
-  if (state.patientCount > 0) {
-    renderList();
-    showView("list");
-  } else {
-    showView("setup");
-  }
-}
-
-async function handleLogin() {
-  const username = normalizeUsername(els.usernameInput.value);
-  const password = els.passwordInput.value;
+async function handleLogin(event) {
+  event.preventDefault();
+  const username = els.loginUsername.value.trim();
+  const password = els.loginPassword.value;
 
   if (!username || !password) {
-    showLoginError("Bitte Benutzername und Passwort eingeben.");
+    toast("Bitte Benutzername und Passwort eingeben.");
     return;
   }
 
-  const users = getUsers();
-  const existingUser = users[username];
-  const passwordHash = await hashPassword(password);
+  const users = loadUsers();
+  const userId = normalizeUserId(username);
+  const existingUser = users[userId];
+  const passwordHash = await hashPassword(password, userId);
+
+  if (existingUser && existingUser.passwordHash !== passwordHash) {
+    toast("Login fehlgeschlagen.");
+    return;
+  }
 
   if (!existingUser) {
-    users[username] = {
+    users[userId] = {
+      userId,
       username,
       passwordHash,
       createdAt: new Date().toISOString(),
     };
     saveUsers(users);
-  } else if (existingUser.passwordHash !== passwordHash) {
-    showLoginError("Login fehlgeschlagen. Bitte Zugangsdaten prüfen.");
-    return;
   }
 
-  localStorage.setItem(SESSION_KEY, username);
-  state.userId = username;
-  state.username = username;
+  currentUser = {
+    userId,
+    username: users[userId].username || username,
+  };
+  localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+  migrateLegacyStateIfNeeded();
   state = loadState();
-  els.usernameInput.value = "";
-  els.passwordInput.value = "";
-  showLoginError("");
-  showAuthenticatedApp();
+  updateUserUi();
+  els.loginPassword.value = "";
+  renderInitialView();
 }
 
 async function createDemoUser() {
-  els.usernameInput.value = "demo";
-  els.passwordInput.value = "demo";
-  await handleLogin();
+  els.loginUsername.value = "demo";
+  els.loginPassword.value = "demo";
+  await handleLogin(new Event("submit"));
 }
 
 function logout() {
+  if (isRecording) stopDictation(false);
   saveState();
-  localStorage.removeItem(SESSION_KEY);
-  state = {
-    userId: null,
-    username: "",
-    dayId: createDayId(),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    patientCount: 0,
-    patients: [],
-    activePatientId: null,
-    view: "setup",
-  };
   showLogin();
 }
 
-function showLoginError(message) {
-  els.loginError.textContent = message;
-  els.loginError.hidden = !message;
+function updateUserUi() {
+  els.userState.classList.toggle("hidden", !currentUser);
+  els.currentUserLabel.textContent = currentUser ? currentUser.username : "";
 }
 
-function getUsers() {
+function loadUsers() {
   try {
-    return JSON.parse(localStorage.getItem(USERS_KEY) || "{}");
+    const users = JSON.parse(localStorage.getItem(USERS_KEY));
+    if (users && typeof users === "object") return users;
   } catch {
     return {};
   }
+  return {};
 }
 
 function saveUsers(users) {
   localStorage.setItem(USERS_KEY, JSON.stringify(users));
 }
 
-function normalizeUsername(value) {
-  return value.trim().toLowerCase().replace(/[^a-z0-9._-]/gi, "-").replace(/-+/g, "-");
+function loadSessionUser() {
+  try {
+    const user = JSON.parse(localStorage.getItem(SESSION_KEY));
+    if (user?.userId && user?.username) return user;
+  } catch {
+    return null;
+  }
+  return null;
 }
 
-async function hashPassword(password) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(`docuvox-mvp:${password}`);
-  const digest = await crypto.subtle.digest("SHA-256", data);
+function normalizeUserId(username) {
+  return String(username || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "") || "user";
+}
+
+async function hashPassword(password, userId) {
+  // MVP only - spaeter durch sichere serverseitige Authentifizierung ersetzen.
+  const source = `docuvox-mvp-v1:${userId}:${password}`;
+  if (!crypto.subtle) return fallbackHash(source);
+  const encoded = new TextEncoder().encode(source);
+  const digest = await crypto.subtle.digest("SHA-256", encoded);
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+function fallbackHash(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `fallback-${(hash >>> 0).toString(16)}`;
+}
+
+function getStateStorageKey() {
+  return currentUser ? `${USER_STATE_PREFIX}${currentUser.userId}` : STORAGE_KEY;
+}
+
+function getBackupStorageKey() {
+  return currentUser ? `${USER_BACKUP_PREFIX}${currentUser.userId}` : BACKUP_KEY;
+}
+
+function migrateLegacyStateIfNeeded() {
+  if (!currentUser) return;
+  const userKey = getStateStorageKey();
+  if (localStorage.getItem(userKey)) return;
+  const legacyState = localStorage.getItem(STORAGE_KEY);
+  if (legacyState) localStorage.setItem(userKey, legacyState);
+  const legacyBackup = localStorage.getItem(BACKUP_KEY);
+  const userBackupKey = getBackupStorageKey();
+  if (legacyBackup && !localStorage.getItem(userBackupKey)) localStorage.setItem(userBackupKey, legacyBackup);
 }
 
 function initSpeech() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   if (!SpeechRecognition) {
-    els.micButton.disabled = true;
-    els.micText.textContent = "Diktat im Browser nicht verfügbar";
+    els.speechStatus.textContent = "Spracheingabe nicht verfügbar. Über Bearbeiten kann Text eingegeben werden.";
+    els.startDictationButton.disabled = true;
     return;
   }
 
@@ -327,868 +309,894 @@ function initSpeech() {
   recognition.lang = "de-CH";
   recognition.continuous = true;
   recognition.interimResults = true;
+  els.speechStatus.textContent = "Bereit für Spracheingabe.";
 
   recognition.onresult = (event) => {
-    interimTranscript = "";
-
+    let interimTranscript = "";
     for (let index = event.resultIndex; index < event.results.length; index += 1) {
-      const transcript = event.results[index][0].transcript;
+      const transcript = event.results[index][0].transcript.trim();
       if (event.results[index].isFinal) {
         finalTranscript += `${transcript} `;
       } else {
         interimTranscript += transcript;
       }
     }
+    els.rawText.value = `${finalTranscript}${interimTranscript}`.trim();
+    saveCurrentRawText();
   };
 
   recognition.onerror = () => {
-    stopDictation(false);
-    showError("Diktat konnte nicht verarbeitet werden. Bitte erneut versuchen.");
+    setRecordingState(false);
+    toast("Diktat wurde unterbrochen.");
   };
 
   recognition.onend = () => {
-    if (isRecording) {
-      try {
-        recognition.start();
-      } catch {
-        stopDictation(false);
-      }
-    }
+    if (isRecording) recognition.start();
   };
 }
 
 function pickCount(button) {
-  selectedCount = Number.parseInt(button.dataset.count, 10);
-  els.customCount.value = "";
-  els.countButtons.forEach((item) => item.classList.remove("is-selected"));
-  button.classList.add("is-selected");
-}
+  document.querySelectorAll("[data-count]").forEach((item) => item.classList.remove("active"));
+  button.classList.add("active");
 
-function createDayList() {
-  const count = selectedCount || Number.parseInt(els.customCount.value, 10);
-
-  if (!count || count < 1 || count > 60) {
-    toast("Bitte eine Patientenzahl zwischen 1 und 60 wählen.");
+  if (button.dataset.count === "other") {
+    els.patientCount.value = "";
+    els.patientCount.focus();
     return;
   }
 
-  const now = new Date().toISOString();
+  els.patientCount.value = button.dataset.count;
+}
+
+function createDayList(event) {
+  event.preventDefault();
+  const count = Number(els.patientCount.value);
+
+  if (!Number.isInteger(count) || count < 1) {
+    toast("Bitte eine Patientenzahl eingeben.");
+    return;
+  }
 
   state = {
-    userId: state.userId,
-    username: state.username,
-    dayId: createDayId(),
-    createdAt: now,
-    updatedAt: now,
-    patientCount: count,
+    date: today(),
+    dayId: `${today()}-${currentUser?.userId || "local"}`,
+    userId: currentUser?.userId || null,
+    updatedAt: new Date().toISOString(),
     activePatientId: null,
-    view: "list",
     patients: Array.from({ length: count }, (_, index) => ({
       id: index + 1,
-      patientLabel: `Patient ${index + 1}`,
-      status: "open",
       rawText: "",
       documentation: "",
-      documentationUpdatedAt: null,
       documentationEditCount: 0,
-      lastManualEditAt: null,
-      updatedAt: now,
+      patientLabel: `Patient ${index + 1}`,
+      updatedAt: new Date().toISOString(),
+      status: "open",
     })),
   };
-
-  selectedCount = null;
-  els.customCount.value = "";
-  els.countButtons.forEach((button) => button.classList.remove("is-selected"));
-
+  currentPatientId = null;
   saveState();
   renderList();
   showView("list");
 }
 
-function requestNewDayList() {
-  if (!state.patientCount) {
-    showView("setup");
-    return;
-  }
+function resetDay() {
+  if (isRecording) stopDictation(false);
+  saveLastDayBackup();
+  resetActiveDay();
+}
 
+function resetActiveDay() {
+  state = createEmptyState();
+  currentPatientId = null;
+  els.patientCount.value = "";
+  document.querySelectorAll("[data-count]").forEach((item) => item.classList.remove("active"));
+  saveState();
+  updateBackupControls();
+  showView("start");
+}
+
+function confirmNewDay() {
   const confirmed = window.confirm(
     "Neue Tagesliste starten?\n\nDie aktuelle Tagesliste wird als letzte Tagesliste gesichert und kann wiederhergestellt werden."
   );
-
   if (!confirmed) return;
+  resetDay();
+}
 
-  saveLastDayBackup();
-  state.patientCount = 0;
-  state.patients = [];
-  state.activePatientId = null;
-  state.dayId = createDayId();
-  state.createdAt = new Date().toISOString();
-  state.updatedAt = new Date().toISOString();
-  saveState();
-  updateBackupButton();
-  showView("setup");
+function renderInitialView() {
+  updateBackupControls();
+  if (state.patients.length) {
+    renderList();
+    showView("list");
+  } else {
+    showView("start");
+  }
 }
 
 function renderList() {
-  const completed = getCompletedPatients().length;
-  const total = state.patientCount;
-  const progress = total ? Math.round((completed / total) * 100) : 0;
+  updateBackupControls();
+  const done = state.patients.filter((patient) => patient.documentation).length;
+  const total = state.patients.length;
+  const percent = total ? Math.round((done / total) * 100) : 0;
 
-  els.progressText.textContent = `Heute ${completed} / ${total} erledigt`;
-  els.progressBar.style.width = `${progress}%`;
-  els.patientList.innerHTML = "";
+  els.dayTitle.textContent = `${total} Patienten heute`;
+  els.progressText.textContent = `Heute ${done} / ${total} erledigt`;
+  els.progressBar.style.width = `${percent}%`;
+  els.patientGrid.innerHTML = "";
 
   state.patients.forEach((patient) => {
+    const active = patient.id === state.activePatientId && !patient.documentation;
     const card = document.createElement("article");
-    card.className = `patient-card status-${patient.status}`;
-    card.dataset.patientId = patient.id;
-
-    const statusLabel = getStatusLabel(patient.status);
-    const hasDocumentation = Boolean(patient.documentation);
-
+    card.className = `patient-card${active ? " active" : ""}`;
     card.innerHTML = `
       <div class="patient-card-main">
-        <div>
-          <h3>Patient ${patient.id}</h3>
-          <p>${statusLabel}</p>
-        </div>
-        <button class="dictate-button" type="button">Diktieren</button>
+        <h3>Patient ${patient.id}</h3>
+        <span class="status ${patient.documentation ? "done" : active ? "active" : ""}">${getStatusLabel(patient, active)}</span>
       </div>
       <div class="patient-card-actions">
+        <button class="primary-button" type="button" data-action="dictate">Diktieren</button>
         ${
-          hasDocumentation
-            ? `<button class="small-copy-button" type="button" data-action="copy" aria-label="Dokumentation von Patient ${patient.id} kopieren">
-                Kopieren
+          patient.documentation
+            ? `<button class="icon-copy-button" type="button" data-action="copy" aria-label="Dokumentation von Patient ${patient.id} kopieren">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="9" y="9" width="11" height="11" rx="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+                <span>Kopieren</span>
               </button>`
             : ""
         }
-        <button class="delete-patient-button" type="button" data-action="delete" aria-label="Eintrag von Patient ${patient.id} löschen">
-          Eintrag löschen
-        </button>
       </div>
     `;
-
-    els.patientList.appendChild(card);
+    card.addEventListener("click", (event) => {
+      const actionButton = event.target.closest("button");
+      if (actionButton?.dataset.action === "copy") {
+        event.stopPropagation();
+        copyPatientDocumentation(patient.id, actionButton);
+        return;
+      }
+      openPatient(patient.id);
+    });
+    els.patientGrid.append(card);
   });
-
-  els.allCopyButton.disabled = completed === 0;
-  els.showSummaryButton.disabled = completed === 0;
-  updateBackupButton();
 }
 
-function getStatusLabel(status) {
-  if (status === "done") return "fertig";
-  if (status === "recording" || status === "processing") return "in Bearbeitung";
-  return "offen";
+function getStatusLabel(patient, active) {
+  if (patient.documentation) return "✅ fertig";
+  if (active) return "🔵 in Bearbeitung";
+  return "⚪ offen";
 }
 
 function openPatient(patientId) {
-  const patient = state.patients.find((item) => item.id === patientId);
-  if (!patient) return;
-
+  if (isRecording) stopDictation(false);
+  currentPatientId = patientId;
   state.activePatientId = patientId;
-  state.view = "detail";
+  const patient = getCurrentPatient();
+
+  els.patientTitle.textContent = `Patient ${patient.id}`;
+  els.patientPosition.textContent = `${patient.id} von ${state.patients.length}`;
+  els.rawText.value = patient.rawText || "";
+  setEditPanelMode(patient.documentation ? "documentation" : "raw");
+  renderDocumentation(patient.documentation);
+  els.editPanel.classList.add("hidden");
+  els.errorState.classList.add("hidden");
+  els.retryButton.classList.add("hidden");
+  els.copyState.classList.add("hidden");
+  els.aiState.classList.toggle("hidden", !patient.documentation);
+  els.aiState.innerHTML = "<span></span>KI aktiv";
+  els.copyDocButton.classList.remove("copied");
+  els.copyDocButton.querySelector("span").textContent = "Dokumentation kopieren";
+  updateDetailActions();
   saveState();
-  renderDetail();
   showView("detail");
 }
 
-function renderDetail() {
-  const patient = getActivePatient();
-  if (!patient) return;
-
-  editMode = false;
-  currentPatientId = patient.id;
-  els.detailTitle.textContent = `Patient ${patient.id}`;
-  els.detailCounter.textContent = `${patient.id} von ${state.patientCount}`;
-
-  const hasDocumentation = Boolean(patient.documentation);
-  setProcessing(patient.status === "processing");
-  setError("");
-  setRecordingUi(patient.status === "recording");
-  setEditPanelMode(false);
-
-  els.documentationCard.hidden = !hasDocumentation;
-  els.documentationOutput.innerHTML = hasDocumentation
-    ? renderDocumentation(patient.documentation)
-    : "";
-
-  els.editButton.hidden = !hasDocumentation;
-  els.copyButton.hidden = !hasDocumentation;
-  els.nextButton.hidden = !hasDocumentation || patient.id >= state.patientCount;
-  els.nextButton.textContent = `Weiter zu Patient ${patient.id + 1}`;
-  els.listButton.hidden = false;
-
-  if (!hasDocumentation) {
-    els.micButton.hidden = false;
-    els.stopButton.hidden = !isRecording;
-  } else {
-    els.micButton.hidden = true;
-    els.stopButton.hidden = true;
-  }
-
-  resetCopyButton(els.copyButton);
-}
-
 function startDictation() {
-  const patient = getActivePatient();
-  if (!patient || !recognition || isRecording) return;
+  if (!recognition || isRecording) return;
 
-  finalTranscript = "";
-  interimTranscript = "";
-  currentPatientId = patient.id;
-  patient.status = "recording";
-  patient.updatedAt = new Date().toISOString();
-  saveState();
-  setError("");
-  setProcessing(false);
-  setRecordingUi(true);
-
-  try {
-    recognition.start();
-    isRecording = true;
-  } catch {
-    isRecording = false;
-    patient.status = patient.documentation ? "done" : "open";
+  const patient = getCurrentPatient();
+  if (patient) {
+    setEditPanelMode("raw");
+    els.rawText.value = patient.rawText || "";
+    patient.status = "active";
+    state.activePatientId = patient.id;
     saveState();
-    setRecordingUi(false);
-    showError("Diktat konnte nicht gestartet werden.");
+  }
+
+  finalTranscript = `${els.rawText.value.trim()} `;
+  recognition.start();
+  setRecordingState(true);
+}
+
+function stopDictation(shouldCreate = true) {
+  if (!recognition || !isRecording) return;
+
+  recognition.stop();
+  setRecordingState(false);
+  saveCurrentRawText();
+
+  if (shouldCreate) {
+    createDocumentation();
   }
 }
 
-function stopDictation(shouldCreateDocumentation) {
-  const patient = getActivePatient();
+function setRecordingState(active) {
+  isRecording = active;
+  els.startDictationButton.classList.toggle("recording", active);
+  els.startDictationButton.classList.remove("success");
+  els.stopDictationButton.classList.toggle("hidden", !active);
+  els.startDictationButton.querySelector(".mic-label").textContent = active ? "Aufnahme läuft..." : "Diktat starten";
+  els.speechStatus.textContent = active ? "Aufnahme läuft. Danach stoppen." : "Bereit für Spracheingabe.";
+}
 
-  if (recognition && isRecording) {
-    isRecording = false;
-    recognition.stop();
-  }
+function showDictationSuccess() {
+  els.startDictationButton.classList.remove("recording");
+  els.startDictationButton.classList.add("success");
+  els.startDictationButton.querySelector(".mic-label").textContent = "Doku erstellt";
+  window.setTimeout(() => {
+    if (!isRecording) {
+      els.startDictationButton.classList.remove("success");
+      els.startDictationButton.querySelector(".mic-label").textContent = "Diktat starten";
+    }
+  }, 1300);
+}
 
-  setRecordingUi(false);
-
+async function createDocumentation() {
+  const patient = getCurrentPatient();
   if (!patient) return;
 
-  const rawText = `${finalTranscript} ${interimTranscript}`.replace(/\s+/g, " ").trim();
-  patient.rawText = rawText;
-  patient.status = rawText ? "processing" : "open";
-  patient.updatedAt = new Date().toISOString();
-  saveState();
-
+  setEditPanelMode("raw");
+  const rawText = els.rawText.value.trim();
   if (!rawText) {
-    showError("Kein Diktat erkannt. Bitte erneut diktieren.");
+    toast("Bitte zuerst ein Diktat eingeben.");
     return;
   }
 
-  if (shouldCreateDocumentation) {
-    createDocumentation(patient);
-  }
-}
-
-async function createDocumentation(patient) {
-  if (!patient) return;
-
-  patient.status = "processing";
-  patient.updatedAt = new Date().toISOString();
-  saveState();
-  setError("");
-  setProcessing(true);
-  els.documentationCard.hidden = true;
-  els.editButton.hidden = true;
-  els.copyButton.hidden = true;
-  els.nextButton.hidden = true;
+  hideResultStates();
+  setProcessingState(true);
 
   try {
-    const response = await fetch("/api/document", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text: patient.rawText,
-        patientLabel: `Patient ${patient.id}`,
-      }),
-    });
-
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok || !data.documentation) {
-      throw new Error(data.error || "API request failed");
-    }
-
-    patient.documentation = normalizeDocumentation(data.documentation, `Patient ${patient.id}`);
-    patient.rawText = "";
-    patient.status = "done";
+    const documentation = await createAiDocumentation(rawText, `Patient ${patient.id}`);
+    patient.documentation = documentation;
     patient.documentationUpdatedAt = new Date().toISOString();
-    patient.updatedAt = patient.documentationUpdatedAt;
-    saveState();
-
-    setProcessing(false);
-    renderDetail();
-    await copyPatientDocumentation(patient.id, els.copyButton, { silent: true });
-    toast("Dokumentation kopiert");
-  } catch {
-    patient.status = patient.documentation ? "done" : "open";
     patient.updatedAt = new Date().toISOString();
+    patient.status = "done";
+    renderDocumentation(documentation);
+    showDictationSuccess();
+    els.aiState.innerHTML = "<span></span>KI aktiv";
+    els.aiState.classList.remove("hidden");
+    els.copyState.classList.add("hidden");
+    els.copyDocButton.classList.remove("hidden");
+    els.copyDocButton.classList.remove("copied");
+    els.copyDocButton.querySelector("span").textContent = "Dokumentation kopieren";
+    updateDetailActions();
     saveState();
-    setProcessing(false);
-    showError(ERROR_MESSAGE);
-    els.retryButton.hidden = false;
+    setEditPanelMode("documentation");
+    toast("KI-Dokumentation erstellt.");
+  } catch (error) {
+    showAiError(error.message);
+  } finally {
+    setProcessingState(false);
   }
 }
 
-function setEditPanelMode(isOpen) {
-  editMode = isOpen;
-  els.editPanel.hidden = !isOpen;
+function toggleEditPanel() {
+  const patient = getCurrentPatient();
+  if (!patient) return;
 
-  if (!isOpen) {
-    els.editTextarea.value = "";
-    els.editSaveButton.textContent = "Änderungen speichern";
-    els.editLabel.textContent = "Finale Dokumentation bearbeiten";
+  const shouldOpen = els.editPanel.classList.contains("hidden");
+  if (!shouldOpen) {
+    els.editPanel.classList.add("hidden");
+    return;
   }
+
+  setEditPanelMode(patient.documentation ? "documentation" : "raw");
+  els.editPanel.classList.remove("hidden");
+  window.setTimeout(() => els.rawText.focus(), 0);
 }
 
-function toggleEditPanel(forceOpen) {
-  const patient = getActivePatient();
-  if (!patient?.documentation) return;
+function setEditPanelMode(mode) {
+  const patient = getCurrentPatient();
+  const editMode = mode === "documentation" && patient?.documentation ? "documentation" : "raw";
 
-  const shouldOpen = typeof forceOpen === "boolean" ? forceOpen : !editMode;
-  setEditPanelMode(shouldOpen);
-
-  if (shouldOpen) {
-    els.editTextarea.value = patient.documentation;
-    els.editLabel.textContent = `Finale Dokumentation Patient ${patient.id}`;
-    els.editTextarea.focus();
+  els.editPanel.dataset.mode = editMode;
+  if (editMode === "documentation") {
+    els.editLabel.textContent = "Fertige Dokumentation bearbeiten";
+    els.rawText.value = patient.documentation;
+    els.rawText.placeholder = "Fertige Dokumentation bearbeiten.";
+    els.createDocButton.textContent = "Änderungen speichern";
+  } else {
+    els.editLabel.textContent = "Rohdiktat";
+    els.rawText.value = patient?.rawText || "";
+    els.rawText.placeholder = "Diktat erscheint hier. Du kannst den Text auch direkt eintippen.";
+    els.createDocButton.textContent = "Doku erstellen und kopieren";
   }
 }
 
 function handleEditPanelAction() {
-  const patient = getActivePatient();
-  if (!patient) return;
-
-  if (editMode) {
+  if (els.editPanel.dataset.mode === "documentation") {
     saveEditedDocumentation();
     return;
   }
 
-  createDocumentation(patient);
+  createDocumentation();
 }
 
 function saveEditedDocumentation() {
-  const patient = getActivePatient();
+  const patient = getCurrentPatient();
   if (!patient) return;
 
-  const edited = els.editTextarea.value.trim();
-
-  if (!edited) {
-    toast("Dokumentation darf nicht leer sein.");
+  const editedDocumentation = normalizeEditedDocumentation(els.rawText.value, patient.id);
+  if (!editedDocumentation) {
+    toast("Bitte eine Dokumentation eingeben.");
     return;
   }
 
-  patient.documentation = normalizeEditedDocumentation(edited, `Patient ${patient.id}`);
+  patient.documentation = editedDocumentation;
   patient.status = "done";
   patient.documentationEditCount = (patient.documentationEditCount || 0) + 1;
+  patient.documentationUpdatedAt = new Date().toISOString();
   patient.lastManualEditAt = new Date().toISOString();
-  patient.documentationUpdatedAt = patient.lastManualEditAt;
-  patient.updatedAt = patient.lastManualEditAt;
+  patient.updatedAt = new Date().toISOString();
+  renderDocumentation(patient.documentation);
+  els.copyState.classList.add("hidden");
+  els.aiState.innerHTML = "<span></span>Bearbeitet";
+  els.aiState.classList.remove("hidden");
+  updateDetailActions();
   saveState();
-
-  setEditPanelMode(false);
-  renderDetail();
+  els.editPanel.classList.add("hidden");
   toast("Dokumentation gespeichert.");
 }
 
-function normalizeEditedDocumentation(text, patientLabel) {
-  const trimmed = text.trim();
-  const hasPatientLine = new RegExp(`^${escapeRegExp(patientLabel)}\\b`, "i").test(trimmed);
-  return hasPatientLine ? trimmed : `${patientLabel}\n\n${trimmed}`;
+function normalizeEditedDocumentation(value, patientId) {
+  const clean = String(value || "")
+    .replace(/\r/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  if (!clean) return "";
+  if (/^Patient\s+\d+/i.test(clean)) return clean;
+  return `Patient ${patientId}\n\n${clean}`;
 }
 
-function setRecordingUi(active) {
-  els.micButton.classList.toggle("is-recording", active);
-  els.micButton.hidden = false;
-  els.stopButton.hidden = !active;
-  els.micText.textContent = active ? "Aufnahme läuft..." : "Diktat starten";
-  els.micIcon.textContent = active ? "●" : "🎙";
-}
+async function createAiDocumentation(rawText, patientLabel) {
+  const response = await fetch("/api/document", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      text: rawText,
+      patientLabel,
+    }),
+  });
 
-function setProcessing(active) {
-  els.processingBox.hidden = !active;
-  els.micButton.hidden = active;
-  els.stopButton.hidden = true;
-}
-
-function setError(message) {
-  els.errorBox.textContent = message;
-  els.errorBox.hidden = !message;
-  els.retryButton.hidden = !message;
-}
-
-function showError(message) {
-  setProcessing(false);
-  setError(message);
-}
-
-async function copyPatientDocumentation(patientId, button, options = {}) {
-  const patient = state.patients.find((item) => item.id === patientId);
-  if (!patient?.documentation) return;
-
-  const clipboard = buildClipboardDocumentation(patient);
-
-  try {
-    await writeClipboard(clipboard);
-    if (!options.silent) {
-      setCopySuccess(button);
-    }
-  } catch {
-    toast("Kopieren nicht möglich. Bitte manuell markieren.");
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.documentation) {
+    const message = data.error || "KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.";
+    const details = data.details ? ` ${data.details}` : "";
+    throw new Error(`${message}${details}`);
   }
+
+  return String(data.documentation).trim();
 }
 
-async function copyAllDocumentation() {
-  const completed = getCompletedPatients();
+function setProcessingState(active) {
+  els.createDocButton.disabled = active;
+  els.retryButton.disabled = active;
+  els.stopDictationButton.disabled = active;
+  els.startDictationButton.disabled = active;
+  els.processingState.classList.toggle("hidden", !active);
+  els.finalDoc.classList.toggle("is-processing", active);
+  els.speechStatus.textContent = active ? "Dokumentation wird erstellt ..." : "Bereit für Spracheingabe.";
+}
 
-  if (!completed.length) return;
+function hideResultStates() {
+  els.errorState.classList.add("hidden");
+  els.retryButton.classList.add("hidden");
+  els.copyState.classList.add("hidden");
+  els.aiState.classList.add("hidden");
+  els.processingState.classList.add("hidden");
+}
 
-  const plainText = completed.map((patient) => formatDocumentationForClipboard(patient.documentation)).join("\n\n");
-  const html = completed.map((patient) => formatDocumentationHtmlForClipboard(patient.documentation)).join("<br><br>");
-
-  try {
-    await writeClipboard({ plainText, html });
-    setCopySuccess(els.summaryCopyAll);
-    setCopySuccess(els.allCopyButton);
-  } catch {
-    toast("Kopieren nicht möglich. Bitte manuell markieren.");
+function showAiError(message = "KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.") {
+  els.errorState.textContent = "Dokumentation konnte nicht erstellt werden. Bitte erneut versuchen.";
+  if (message && !message.includes("KI-Verarbeitung fehlgeschlagen")) {
+    els.errorState.textContent += ` ${message}`;
   }
+  els.errorState.classList.remove("hidden");
+  els.retryButton.classList.remove("hidden");
+  els.copyState.classList.add("hidden");
+  els.copyDocButton.classList.add("hidden");
+  els.nextPatientButton.classList.add("hidden");
+  els.backBottomButton.classList.remove("prominent-return");
+  els.aiState.innerHTML = "<span></span>KI nicht aktiv";
+  els.aiState.classList.remove("hidden");
+  toast("Dokumentation konnte nicht erstellt werden.");
 }
 
-async function writeClipboard({ plainText, html }) {
-  if (navigator.clipboard?.write && window.ClipboardItem && html) {
-    const item = new ClipboardItem({
-      "text/plain": new Blob([plainText], { type: "text/plain" }),
-      "text/html": new Blob([html], { type: "text/html" }),
-    });
-    await navigator.clipboard.write([item]);
+async function copyCurrentDocumentation() {
+  const patient = getCurrentPatient();
+  if (!patient?.documentation) {
+    toast("Noch keine Dokumentation vorhanden.");
     return;
   }
 
-  await navigator.clipboard.writeText(plainText);
+  const copied = await copyDocumentation(patient.documentation, patient.id, "Dokumentation kopiert.");
+  if (!copied) return;
+
+  showCopyConfirmation();
+  showCopyButtonSuccess(els.copyDocButton);
 }
 
-function buildClipboardDocumentation(patient) {
-  return {
-    plainText: formatDocumentationForClipboard(patient.documentation),
-    html: formatDocumentationHtmlForClipboard(patient.documentation),
-  };
+async function copyPatientDocumentation(patientId, button) {
+  const patient = state.patients.find((item) => item.id === patientId);
+  if (!patient?.documentation) {
+    toast("Noch keine Dokumentation vorhanden.");
+    return;
+  }
+
+  const copied = await copyDocumentation(patient.documentation, patient.id, `Patient ${patient.id} kopiert.`);
+  if (copied && button) showCopyButtonSuccess(button);
 }
 
-function setCopySuccess(button) {
-  if (!button) return;
+function handleEditTextInput() {
+  if (els.editPanel.dataset.mode === "documentation") return;
+  saveCurrentRawText();
+}
 
-  const original = button.dataset.originalText || button.textContent.trim();
-  button.dataset.originalText = original;
-  button.classList.add("is-copied");
+function saveCurrentRawText() {
+  const patient = getCurrentPatient();
+  if (!patient) return;
+  patient.rawText = els.rawText.value.trim();
+  patient.updatedAt = new Date().toISOString();
+  saveState();
+}
 
-  if (button === els.copyButton) {
-    els.copyButtonText.textContent = "Kopiert ✓";
+function goToNextPatient() {
+  const next = getNextOpenPatient();
+  if (next) {
+    openPatient(next.id);
+  } else {
+    showList();
+  }
+}
+
+function updateDetailActions() {
+  const patient = getCurrentPatient();
+  const hasDocumentation = Boolean(patient?.documentation);
+  const next = getNextOpenPatient();
+
+  els.copyDocButton.classList.toggle("hidden", !hasDocumentation);
+  els.nextPatientButton.classList.toggle("hidden", !hasDocumentation || !next);
+  els.backBottomButton.classList.toggle("prominent-return", hasDocumentation && !next);
+
+  if (next) {
+    els.nextPatientButton.textContent = `Weiter zu Patient ${next.id}`;
+  }
+}
+
+function getNextOpenPatient() {
+  return state.patients.find((patient) => patient.id > currentPatientId && !patient.documentation);
+}
+
+function showList() {
+  if (isRecording) stopDictation(false);
+  renderList();
+  showView("list");
+}
+
+function showAllDocs() {
+  renderAllDocs();
+  showView("all");
+}
+
+async function copyAllDocs() {
+  const text = getAllDocsText();
+  if (!text) {
+    toast("Noch keine fertigen Dokumentationen vorhanden.");
+    return;
+  }
+  const documentedPatients = state.patients.filter((patient) => patient.documentation);
+  await copyRichText(text, buildAllDocsHtml(documentedPatients), "Alle Dokumentationen kopiert.");
+}
+
+async function copyText(text, message) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(message);
+    return true;
+  } catch {
+    const helper = document.createElement("textarea");
+    helper.value = text;
+    helper.style.position = "fixed";
+    helper.style.opacity = "0";
+    document.body.append(helper);
+    helper.select();
+    const copied = document.execCommand("copy");
+    helper.remove();
+    toast(copied ? message : "Kopieren ist in diesem Browser nicht erlaubt.");
+    return copied;
+  }
+}
+
+async function copyDocumentation(documentation, patientId, message) {
+  const plainText = formatDocumentationForClipboard(documentation, patientId);
+  const html = formatDocumentationHtmlForClipboard(documentation, patientId);
+  return copyRichText(plainText, html, message);
+}
+
+async function copyRichText(plainText, html, message) {
+  if (navigator.clipboard?.write && window.ClipboardItem) {
+    try {
+      const item = new ClipboardItem({
+        "text/plain": new Blob([plainText], { type: "text/plain" }),
+        "text/html": new Blob([html], { type: "text/html" }),
+      });
+      await navigator.clipboard.write([item]);
+      toast(message);
+      return true;
+    } catch {
+      return copyText(plainText, message);
+    }
+  }
+
+  return copyText(plainText, message);
+}
+
+function showCopyConfirmation() {
+  els.copyState.classList.remove("hidden");
+  window.clearTimeout(showCopyConfirmation.timeout);
+  showCopyConfirmation.timeout = window.setTimeout(() => {
+    els.copyState.classList.add("hidden");
+  }, 2000);
+}
+
+function showCopyButtonSuccess(button) {
+  const label = button.querySelector("span");
+  const originalText = label ? label.textContent : button.textContent;
+  const originalHtml = button.dataset.originalHtml || button.innerHTML;
+  button.dataset.originalHtml = originalHtml;
+  button.classList.add("copied");
+  if (label) {
+    label.textContent = "Kopiert ✓";
   } else {
     button.textContent = "Kopiert ✓";
   }
 
-  window.clearTimeout(button._copyTimer);
-  button._copyTimer = window.setTimeout(() => {
-    button.classList.remove("is-copied");
-    if (button === els.copyButton) {
-      els.copyButtonText.textContent = "Dokumentation kopieren";
+  window.setTimeout(() => {
+    button.classList.remove("copied");
+    if (label) {
+      label.textContent = originalText;
     } else {
-      button.textContent = original;
+      button.innerHTML = originalHtml;
     }
-  }, COPY_RESET_DELAY);
+  }, 2000);
 }
 
-function resetCopyButton(button) {
-  if (!button) return;
-
-  window.clearTimeout(button._copyTimer);
-  button.classList.remove("is-copied");
-
-  if (button === els.copyButton) {
-    els.copyButtonText.textContent = "Dokumentation kopieren";
-  } else if (button.dataset.originalText) {
-    button.textContent = button.dataset.originalText;
-  }
+function getAllDocsText() {
+  return state.patients
+    .filter((patient) => patient.documentation)
+    .map((patient) => buildPlainTextDocumentation(patient))
+    .join("\n\n");
 }
 
-function goToNextPatient() {
-  const patient = getActivePatient();
-  if (!patient) return;
-
-  const next = state.patients.find((item) => item.id === patient.id + 1);
-  if (next) openPatient(next.id);
+function buildPlainTextDocumentation(patient) {
+  if (!patient?.documentation) return "";
+  return formatDocumentationForClipboard(patient.documentation, patient.id);
 }
 
-function deletePatientEntry(patientId) {
-  const patient = state.patients.find((item) => item.id === patientId);
-  if (!patient) return;
+function formatDocumentationForClipboard(documentation, patientId) {
+  const patientTitle = extractPatientTitle(documentation);
+  const fallbackTitle = patientId ? `Patient ${patientId}` : patientTitle;
+  const sections = extractDocumentationSections(documentation);
+  const lines = [fallbackTitle || patientTitle || "Patient"];
 
-  const confirmed = window.confirm(
-    `Eintrag von Patient ${patientId} löschen?\n\nRohdiktat und fertige Dokumentation dieses Patienten werden nur für den aktuellen Nutzer entfernt.`
-  );
+  sections.forEach((section) => {
+    const points = section.points
+      .map(cleanClipboardLine)
+      .filter(Boolean);
 
-  if (!confirmed) return;
+    lines.push("");
+    lines.push(section.title);
+    points.forEach((point) => lines.push(`- ${point}`));
+  });
 
-  if (isRecording && currentPatientId === patientId) {
-    stopDictation(false);
-  }
-
-  patient.rawText = "";
-  patient.documentation = "";
-  patient.status = "open";
-  patient.documentationEditCount = 0;
-  patient.documentationUpdatedAt = null;
-  patient.lastManualEditAt = null;
-  patient.updatedAt = new Date().toISOString();
-
-  if (state.activePatientId === patientId) {
-    state.activePatientId = null;
-  }
-
-  if (currentPatientId === patientId) {
-    currentPatientId = null;
-    renderList();
-    showView("list");
-  } else {
-    renderList();
-  }
-
-  saveState();
-  toast(`Patient ${patientId} gelöscht.`);
+  return lines
+    .join("\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
-function showView(view) {
-  state.view = view;
-  saveState();
+function formatDocumentationHtmlForClipboard(documentation, patientId) {
+  const patientTitle = escapeHtml(patientId ? `Patient ${patientId}` : extractPatientTitle(documentation));
+  const sections = extractDocumentationSections(documentation);
+  const sectionHtml = sections
+    .map((section) => {
+      const points = section.points.map(cleanClipboardLine).filter(Boolean);
+      return `
+        <div style="margin: 0 0 12px 0;">
+          <p style="margin: 0 0 4px 0; font-weight: 700;"><strong>${escapeHtml(section.title)}</strong></p>
+          ${points.map((point) => `<p style="margin: 0 0 2px 0;">- ${escapeHtml(point)}</p>`).join("")}
+        </div>
+      `;
+    })
+    .join("");
 
-  els.setupView.hidden = view !== "setup";
-  els.listView.hidden = view !== "list";
-  els.detailView.hidden = view !== "detail";
-  els.summaryView.hidden = view !== "summary";
-
-  if (view === "list") {
-    renderList();
-  }
-
-  if (view === "summary") {
-    renderSummary();
-  }
+  return `
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: Arial, sans-serif; font-size: 12pt; line-height: 1.45; white-space: normal; word-break: normal; overflow-wrap: normal; hyphens: none; }
+          p { word-break: normal; overflow-wrap: normal; hyphens: none; }
+        </style>
+      </head>
+      <body>
+        <p style="margin: 0 0 12px 0;">${patientTitle}</p>
+        ${sectionHtml}
+      </body>
+    </html>
+  `.trim();
 }
 
-function renderSummary() {
-  const completed = getCompletedPatients();
-  els.summaryList.innerHTML = "";
+function buildAllDocsHtml(patients) {
+  return `
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: Arial, sans-serif; font-size: 12pt; line-height: 1.45; white-space: normal; word-break: normal; overflow-wrap: normal; hyphens: none; }
+          p { word-break: normal; overflow-wrap: normal; hyphens: none; }
+        </style>
+      </head>
+      <body>
+        ${patients.map((patient) => formatDocumentationHtmlForClipboard(patient.documentation, patient.id).replace(/^[\s\S]*<body>|<\/body>[\s\S]*$/g, "")).join('<div style="height: 14px;"></div>')}
+      </body>
+    </html>
+  `.trim();
+}
 
-  if (!completed.length) {
-    els.summaryList.innerHTML = `<p class="empty-state">Noch keine fertigen Dokumentationen.</p>`;
-    els.summaryCopyAll.disabled = true;
+function cleanClipboardLine(value) {
+  return String(value || "")
+    .replace(/\*\*/g, "")
+    .replace(/<\/?[^>]+>/g, "")
+    .replace(/[\u00ad]/g, "")
+    .replace(/\s*-\s*\n\s*/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s+([.,;:!?])/g, "$1")
+    .trim();
+}
+
+function renderDocumentation(documentation) {
+  if (!documentation) {
+    els.finalDoc.innerHTML = `<p class="doc-placeholder">Nach dem Stoppen erscheint hier die KI-Dokumentation.</p>`;
     return;
   }
 
-  completed.forEach((patient) => {
-    const item = document.createElement("article");
-    item.className = "summary-item";
-    item.innerHTML = `
-      <div class="summary-item-header">
+  els.finalDoc.innerHTML = documentationToHtml(documentation);
+}
+
+function renderAllDocs() {
+  const documentedPatients = state.patients.filter((patient) => patient.documentation);
+  els.allDocsText.innerHTML = "";
+
+  if (!documentedPatients.length) {
+    els.allDocsText.innerHTML = `<p class="doc-placeholder">Noch keine fertigen Dokumentationen vorhanden.</p>`;
+    return;
+  }
+
+  documentedPatients.forEach((patient) => {
+    const entry = document.createElement("article");
+    entry.className = "all-doc-entry";
+    entry.innerHTML = `
+      <div class="all-doc-entry-top">
         <h3>Patient ${patient.id}</h3>
-        <button class="small-copy-button" type="button" data-summary-copy="${patient.id}">Kopieren</button>
+        <button class="icon-copy-button" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="9" y="9" width="11" height="11" rx="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+          <span>Kopieren</span>
+        </button>
       </div>
-      <div class="documentation-output">
-        ${renderDocumentation(patient.documentation)}
-      </div>
+      <div class="documentation-box compact-doc">${documentationToHtml(patient.documentation)}</div>
     `;
-    els.summaryList.appendChild(item);
+    entry.querySelector("button").addEventListener("click", () => copyPatientDocumentation(patient.id, entry.querySelector("button")));
+    els.allDocsText.append(entry);
   });
-
-  els.summaryCopyAll.disabled = false;
 }
 
-function renderDocumentation(text) {
-  const normalized = normalizeDocumentation(text, getActivePatientLabelFromText(text));
-  const lines = normalized.split("\n");
-  let html = "";
-  let openList = false;
+function documentationToHtml(documentation) {
+  const patientTitle = extractPatientTitle(documentation);
+  const sections = extractDocumentationSections(documentation);
+  const sectionHtml = sections
+    .map(
+      (section) => `
+        <section class="doc-section">
+          <h3>${escapeHtml(section.title)}</h3>
+          <ul>
+            ${section.points.map((point) => `<li>${escapeHtml(point)}</li>`).join("")}
+          </ul>
+        </section>
+      `
+    )
+    .join("");
 
-  lines.forEach((line) => {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      if (openList) {
-        html += "</ul>";
-        openList = false;
-      }
-      return;
-    }
-
-    if (/^Patient\s+\d+/i.test(trimmed)) {
-      if (openList) {
-        html += "</ul>";
-        openList = false;
-      }
-      html += `<p class="doc-patient">${escapeHtml(trimmed)}</p>`;
-      return;
-    }
-
-    const heading = trimmed.match(/^\*\*(.+?)\*\*$/) || trimmed.match(/^\*\*(.+?):\*\*$/);
-    if (heading) {
-      if (openList) {
-        html += "</ul>";
-        openList = false;
-      }
-      html += `<h4>${escapeHtml(heading[1].replace(/:$/, ""))}</h4>`;
-      return;
-    }
-
-    const bullet = trimmed.replace(/^[-•]\s*/, "");
-    if (!openList) {
-      html += "<ul>";
-      openList = true;
-    }
-    html += `<li>${escapeHtml(bullet)}</li>`;
-  });
-
-  if (openList) html += "</ul>";
-  return html;
+  return `
+    <div class="doc-patient-title">${escapeHtml(patientTitle)}</div>
+    ${sectionHtml}
+  `;
 }
 
-function normalizeDocumentation(text, patientLabel) {
-  const cleaned = String(text || "")
+function extractPatientTitle(documentation) {
+  const match = String(documentation || "").match(/Patient\s+\d+/i);
+  return match ? match[0].replace(/^patient/i, "Patient") : "Patient";
+}
+
+function extractDocumentationSections(documentation) {
+  const order = ["Befund aktuell", "Behandlung", "Reaktion / Verlauf", "Ausblick / Empfehlung"];
+  return order.map((title, index) => {
+    const nextTitles = order
+      .filter((_, nextIndex) => nextIndex > index)
+      .map(escapeRegExp)
+      .join("|");
+    const endPattern = nextTitles ? `(?=\\n\\s*(?:[-•]\\s*)?(?:\\*\\*)?(?:${nextTitles})\\s*:?(?:\\*\\*)?|$)` : "$";
+    const pattern = new RegExp(
+      `(?:^|\\n)\\s*(?:[-•]\\s*)?(?:\\*\\*)?${escapeRegExp(title)}\\s*:?(?:\\*\\*)?\\s*([\\s\\S]*?)${endPattern}`,
+      "i"
+    );
+    const match = String(documentation || "").match(pattern);
+    return {
+      title,
+      points: splitSectionPoints(match?.[1] || "Im Diktat nicht eindeutig beschrieben; weiter beobachten."),
+    };
+  });
+}
+
+function splitSectionPoints(value) {
+  const clean = String(value || "")
     .replace(/\r/g, "")
-    .replace(/\*\*(Befund aktuell|Behandlung|Reaktion \/ Verlauf|Ausblick \/ Empfehlung):\*\*/g, "**$1**")
     .trim();
+  const lines = clean
+    .split(/\n+/)
+    .map((line) => line.replace(/^[-•*]\s*/, "").trim())
+    .filter(Boolean);
 
-  const label = patientLabel || "Patient 1";
-  const withoutPatient = cleaned.replace(/^Patient\s+\d+\s*/i, "").trim();
+  if (lines.length > 1) return lines;
+  if (lines.length === 1) return [lines[0]];
 
-  const sections = [
-    "Befund aktuell",
-    "Behandlung",
-    "Reaktion / Verlauf",
-    "Ausblick / Empfehlung",
-  ];
-
-  const parsed = {};
-  let current = null;
-
-  withoutPatient.split("\n").forEach((line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-
-    const heading = sections.find((section) => {
-      const pattern = new RegExp(`^\\*\\*${escapeRegExp(section)}:?\\*\\*|^${escapeRegExp(section)}:?$`, "i");
-      return pattern.test(trimmed);
-    });
-
-    if (heading) {
-      current = heading;
-      parsed[current] = parsed[current] || [];
-      return;
-    }
-
-    if (current) {
-      parsed[current].push(trimmed.replace(/^[-•]\s*/, ""));
-    }
-  });
-
-  let output = `${label}\n\n`;
-
-  sections.forEach((section, index) => {
-    const items = (parsed[section] || []).filter(Boolean);
-    output += `**${section}**\n`;
-
-    if (items.length) {
-      output += items.map((item) => `- ${item}`).join("\n");
-    }
-
-    if (index < sections.length - 1) output += "\n\n";
-  });
-
-  return output.trim();
-}
-
-function formatDocumentationForClipboard(text) {
-  return normalizeDocumentation(text, getActivePatientLabelFromText(text))
-    .replace(/\*\*/g, "")
-    .replace(/^•\s*/gm, "- ")
-    .replace(/\n{3,}/g, "\n\n")
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .join("\n")
-    .trim();
-}
-
-function formatDocumentationHtmlForClipboard(text) {
-  const normalized = normalizeDocumentation(text, getActivePatientLabelFromText(text));
-  const escaped = escapeHtml(normalized)
-    .replace(/\*\*(Befund aktuell|Behandlung|Reaktion \/ Verlauf|Ausblick \/ Empfehlung)\*\*/g, "<strong>$1</strong>")
-    .replace(/^- /gm, "• ");
-
-  return `<div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.45; color: #111827; word-break: normal; overflow-wrap: normal; hyphens: none; white-space: pre-wrap;">${escaped}</div>`;
-}
-
-function getActivePatientLabelFromText(text) {
-  const match = String(text || "").match(/^Patient\s+\d+/i);
-  if (match) return match[0];
-
-  const patient = getActivePatient();
-  return patient ? `Patient ${patient.id}` : "Patient 1";
-}
-
-function getActivePatient() {
-  return state.patients.find((patient) => patient.id === state.activePatientId);
-}
-
-function getCompletedPatients() {
-  return state.patients.filter((patient) => patient.documentation);
-}
-
-function loadState() {
-  const base = {
-    userId: state.userId,
-    username: state.username,
-    dayId: createDayId(),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    patientCount: 0,
-    patients: [],
-    activePatientId: null,
-    view: "setup",
-  };
-
-  try {
-    const saved = JSON.parse(localStorage.getItem(getStorageKey()) || "null");
-    if (!saved) return base;
-    return sanitizeStateForStorage({ ...base, ...saved, userId: state.userId, username: state.username });
-  } catch {
-    return base;
-  }
-}
-
-function saveState() {
-  if (!state.userId) return;
-
-  state.updatedAt = new Date().toISOString();
-  const sanitized = sanitizeStateForStorage(state);
-  state = sanitized;
-  localStorage.setItem(getStorageKey(), JSON.stringify(sanitized));
-}
-
-function getStorageKey() {
-  return `${STORAGE_PREFIX}${state.userId}`;
-}
-
-function getBackupKey() {
-  return `${BACKUP_PREFIX}${state.userId}`;
-}
-
-function saveLastDayBackup() {
-  if (!state.userId || !state.patientCount) return;
-
-  const backup = sanitizeStateForStorage({
-    ...state,
-    backedUpAt: new Date().toISOString(),
-  });
-
-  localStorage.setItem(getBackupKey(), JSON.stringify(backup));
-}
-
-function updateBackupButton() {
-  if (!state.userId) return;
-  const backup = localStorage.getItem(getBackupKey());
-  els.restoreBackupButton.hidden = !backup;
-}
-
-function restoreLastBackup() {
-  const backupRaw = localStorage.getItem(getBackupKey());
-  if (!backupRaw) return;
-
-  const confirmed = window.confirm(
-    "Letzte Tagesliste wiederherstellen?\n\nDie aktuelle Tagesliste wird dadurch ersetzt."
-  );
-
-  if (!confirmed) return;
-
-  try {
-    const backup = JSON.parse(backupRaw);
-    state = sanitizeStateForStorage({
-      ...backup,
-      userId: state.userId,
-      username: state.username,
-      activePatientId: null,
-      view: "list",
-      updatedAt: new Date().toISOString(),
-    });
-    saveState();
-    renderList();
-    showView("list");
-    toast("Letzte Tagesliste wiederhergestellt.");
-  } catch {
-    toast("Backup konnte nicht wiederhergestellt werden.");
-  }
-}
-
-function sanitizeStateForStorage(value) {
-  const patients = Array.isArray(value?.patients) ? value.patients : [];
-
-  return {
-    ...value,
-    patients: patients.map((patient) => ({
-      ...patient,
-      patientLabel: patient.patientLabel || `Patient ${patient.id}`,
-      rawText: patient.documentation ? "" : patient.rawText || "",
-      updatedAt: patient.updatedAt || value.updatedAt || new Date().toISOString(),
-    })),
-  };
-}
-
-function createDayId() {
-  return `day_${new Date().toISOString().slice(0, 10)}`;
-}
-
-function toast(message) {
-  const existing = document.querySelector(".toast");
-  if (existing) existing.remove();
-
-  const toastEl = document.createElement("div");
-  toastEl.className = "toast";
-  toastEl.textContent = message;
-  document.body.appendChild(toastEl);
-
-  window.setTimeout(() => {
-    toastEl.classList.add("is-visible");
-  }, 10);
-
-  window.setTimeout(() => {
-    toastEl.classList.remove("is-visible");
-    window.setTimeout(() => toastEl.remove(), 250);
-  }, 2400);
+  return ["Im Diktat nicht eindeutig beschrieben; weiter beobachten."];
 }
 
 function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (char) => {
-    const entities = {
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#039;",
-    };
-    return entities[char];
-  });
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getCurrentPatient() {
+  return state.patients.find((patient) => patient.id === currentPatientId);
+}
+
+function showView(view) {
+  els.loginView.classList.toggle("hidden", view !== "login");
+  els.startView.classList.toggle("hidden", view !== "start");
+  els.listView.classList.toggle("hidden", view !== "list");
+  els.detailView.classList.toggle("hidden", view !== "detail");
+  els.allDocsView.classList.toggle("hidden", view !== "all");
+  updateBackupControls();
+}
+
+function loadState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(getStateStorageKey()));
+    if (saved && Array.isArray(saved.patients)) return saved;
+  } catch {
+    return createEmptyState();
+  }
+  return createEmptyState();
+}
+
+function saveState() {
+  state = {
+    ...state,
+    userId: currentUser?.userId || null,
+    dayId: state.dayId || `${today()}-${currentUser?.userId || "local"}`,
+    updatedAt: new Date().toISOString(),
+  };
+  localStorage.setItem(getStateStorageKey(), JSON.stringify(state));
+}
+
+function saveLastDayBackup() {
+  if (!state.patients.length) return;
+  const backup = {
+    savedAt: new Date().toISOString(),
+    userId: currentUser?.userId || null,
+    state: JSON.parse(JSON.stringify({
+      ...state,
+      userId: currentUser?.userId || null,
+      updatedAt: new Date().toISOString(),
+    })),
+  };
+  localStorage.setItem(getBackupStorageKey(), JSON.stringify(backup));
+}
+
+function loadLastDayBackup() {
+  try {
+    const backup = JSON.parse(localStorage.getItem(getBackupStorageKey()));
+    if (backup?.state && Array.isArray(backup.state.patients)) return backup;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function updateBackupControls() {
+  const hasBackup = Boolean(loadLastDayBackup());
+  els.restoreStartButton?.classList.toggle("hidden", !hasBackup);
+  els.restoreListButton?.classList.toggle("hidden", !hasBackup);
+}
+
+function restoreLastDayBackup() {
+  const backup = loadLastDayBackup();
+  if (!backup) {
+    toast("Keine gesicherte Tagesliste vorhanden.");
+    updateBackupControls();
+    return;
+  }
+
+  const confirmed = window.confirm("Letzte Tagesliste wiederherstellen?\n\nDie aktuelle Tagesliste wird dadurch ersetzt.");
+  if (!confirmed) return;
+
+  if (isRecording) stopDictation(false);
+  state = backup.state;
+  currentPatientId = null;
+  saveState();
+  renderList();
+  showView("list");
+  toast("Letzte Tagesliste wiederhergestellt.");
+}
+
+function createEmptyState() {
+  return {
+    date: today(),
+    dayId: `${today()}-${currentUser?.userId || "local"}`,
+    userId: currentUser?.userId || null,
+    updatedAt: new Date().toISOString(),
+    activePatientId: null,
+    patients: [],
+  };
+}
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function toast(message) {
+  els.toast.textContent = message;
+  els.toast.classList.add("visible");
+  window.clearTimeout(toast.timeout);
+  toast.timeout = window.setTimeout(() => {
+    els.toast.classList.remove("visible");
+  }, 2200);
 }
 
 function registerServiceWorker() {
-  if ("serviceWorker" in navigator) {
+  if (!("serviceWorker" in navigator)) return;
+  if (!window.isSecureContext) return;
+
+  window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch(() => {});
-  }
+  });
 }
