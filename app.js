@@ -1,7 +1,6 @@
 const STORAGE_KEY = "docuvox-day-v3";
 const BACKUP_KEY = "docuvox-last-day-backup-v1";
-const USERS_KEY = "docuvox-users-v1";
-const SESSION_KEY = "docuvox-session-user-v1";
+const SESSION_KEY = "docuvox-auth-session-v1";
 const USER_STATE_PREFIX = "docuvox_state_";
 const USER_BACKUP_PREFIX = "docuvox_backup_";
 
@@ -64,22 +63,24 @@ function setupGeneratedUi() {
     <div class="login-card">
       <p class="eyebrow">Login</p>
       <h2>Bei DocuVox anmelden</h2>
-      <p class="login-note">MVP only - spaeter sichere Authentifizierung und Cloud-Sync.</p>
+      <p class="login-note">Pilotphase: Bitte keine vollständigen Patientennamen verwenden.</p>
       <form id="loginForm" class="login-form">
-        <label class="field-label" for="loginUsername">Benutzername</label>
-        <input id="loginUsername" type="text" autocomplete="username" placeholder="z. B. hugo" required />
+        <label class="field-label" for="loginEmail">E-Mail-Adresse</label>
+        <input id="loginEmail" type="email" autocomplete="email" placeholder="name@praxis.ch" required />
         <label class="field-label" for="loginPassword">Passwort</label>
         <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Passwort" required />
         <button class="primary-button" type="submit">Einloggen</button>
-        <button class="secondary-button" id="demoUserButton" type="button">Demo-Nutzer erstellen</button>
+        <button class="secondary-button" id="createAccountButton" type="button">Konto erstellen</button>
+        <p class="login-message hidden" id="loginMessage" role="status" aria-live="polite"></p>
       </form>
     </div>
   `;
   els.startView.parentElement.insertBefore(els.loginView, els.startView);
   els.loginForm = els.loginView.querySelector("#loginForm");
-  els.loginUsername = els.loginView.querySelector("#loginUsername");
+  els.loginEmail = els.loginView.querySelector("#loginEmail");
   els.loginPassword = els.loginView.querySelector("#loginPassword");
-  els.demoUserButton = els.loginView.querySelector("#demoUserButton");
+  els.createAccountButton = els.loginView.querySelector("#createAccountButton");
+  els.loginMessage = els.loginView.querySelector("#loginMessage");
 
   els.userState = document.createElement("div");
   els.userState.className = "user-state hidden";
@@ -119,7 +120,7 @@ function setupGeneratedUi() {
 
 function bindEvents() {
   els.loginForm.addEventListener("submit", handleLogin);
-  els.demoUserButton.addEventListener("click", createDemoUser);
+  els.createAccountButton.addEventListener("click", createAccount);
   els.logoutButton.addEventListener("click", logout);
   els.dayForm.addEventListener("submit", createDayList);
   document.querySelectorAll("[data-count]").forEach((button) => {
@@ -161,55 +162,62 @@ function showLogin() {
   localStorage.removeItem(SESSION_KEY);
   updateUserUi();
   showView("login");
-  window.setTimeout(() => els.loginUsername.focus(), 0);
+  window.setTimeout(() => els.loginEmail.focus(), 0);
 }
 
 async function handleLogin(event) {
   event.preventDefault();
-  const username = els.loginUsername.value.trim();
-  const password = els.loginPassword.value;
-
-  if (!username || !password) {
-    toast("Bitte Benutzername und Passwort eingeben.");
-    return;
-  }
-
-  const users = loadUsers();
-  const userId = normalizeUserId(username);
-  const existingUser = users[userId];
-  const passwordHash = await hashPassword(password, userId);
-
-  if (existingUser && existingUser.passwordHash !== passwordHash) {
-    toast("Login fehlgeschlagen.");
-    return;
-  }
-
-  if (!existingUser) {
-    users[userId] = {
-      userId,
-      username,
-      passwordHash,
-      createdAt: new Date().toISOString(),
-    };
-    saveUsers(users);
-  }
-
-  currentUser = {
-    userId,
-    username: users[userId].username || username,
-  };
-  localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
-  migrateLegacyStateIfNeeded();
-  state = loadState();
-  updateUserUi();
-  els.loginPassword.value = "";
-  renderInitialView();
+  await authenticate("login");
 }
 
-async function createDemoUser() {
-  els.loginUsername.value = "demo";
-  els.loginPassword.value = "demo";
-  await handleLogin(new Event("submit"));
+async function createAccount() {
+  await authenticate("signup");
+}
+
+async function authenticate(action) {
+  const email = els.loginEmail.value.trim().toLowerCase();
+  const password = els.loginPassword.value;
+
+  if (!email || !password) {
+    showLoginMessage("Bitte E-Mail-Adresse und Passwort eingeben.", true);
+    return;
+  }
+
+  setAuthBusy(true);
+  showLoginMessage("");
+
+  try {
+    const result = await requestAuth(action, email, password);
+
+    if (result.requiresEmailConfirmation) {
+      els.loginPassword.value = "";
+      showLoginMessage("Bitte bestätige deine E-Mail-Adresse.");
+      return;
+    }
+
+    if (!result.session?.userId || !result.session?.email) {
+      throw new Error("Session konnte nicht erstellt werden.");
+    }
+
+    currentUser = {
+      userId: result.session.userId,
+      email: result.session.email,
+      accessToken: result.session.accessToken || "",
+      refreshToken: result.session.refreshToken || "",
+      expiresAt: result.session.expiresAt || null,
+    };
+
+    localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+    state = loadState();
+    updateUserUi();
+    els.loginPassword.value = "";
+    showLoginMessage("");
+    renderInitialView();
+  } catch (error) {
+    showLoginMessage(error.message || "Login fehlgeschlagen.", true);
+  } finally {
+    setAuthBusy(false);
+  }
 }
 
 function logout() {
@@ -220,61 +228,48 @@ function logout() {
 
 function updateUserUi() {
   els.userState.classList.toggle("hidden", !currentUser);
-  els.currentUserLabel.textContent = currentUser ? currentUser.username : "";
-}
-
-function loadUsers() {
-  try {
-    const users = JSON.parse(localStorage.getItem(USERS_KEY));
-    if (users && typeof users === "object") return users;
-  } catch {
-    return {};
-  }
-  return {};
-}
-
-function saveUsers(users) {
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
+  els.currentUserLabel.textContent = currentUser ? currentUser.email : "";
 }
 
 function loadSessionUser() {
   try {
     const user = JSON.parse(localStorage.getItem(SESSION_KEY));
-    if (user?.userId && user?.username) return user;
+    if (user?.userId && user?.email) return user;
   } catch {
     return null;
   }
   return null;
 }
 
-function normalizeUserId(username) {
-  return String(username || "")
-    .trim()
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "") || "user";
-}
+async function requestAuth(action, email, password) {
+  const response = await fetch("/api/auth", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ action, email, password }),
+  });
 
-async function hashPassword(password, userId) {
-  // MVP only - spaeter durch sichere serverseitige Authentifizierung ersetzen.
-  const source = `docuvox-mvp-v1:${userId}:${password}`;
-  if (!crypto.subtle) return fallbackHash(source);
-  const encoded = new TextEncoder().encode(source);
-  const digest = await crypto.subtle.digest("SHA-256", encoded);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
+  const data = await response.json().catch(() => ({}));
 
-function fallbackHash(value) {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
+  if (!response.ok) {
+    throw new Error(data.error || "Authentifizierung fehlgeschlagen.");
   }
-  return `fallback-${(hash >>> 0).toString(16)}`;
+
+  return data;
+}
+
+function setAuthBusy(active) {
+  els.loginForm.classList.toggle("is-busy", active);
+  els.loginForm.querySelectorAll("button, input").forEach((element) => {
+    element.disabled = active;
+  });
+}
+
+function showLoginMessage(message, isError = false) {
+  els.loginMessage.textContent = message;
+  els.loginMessage.classList.toggle("hidden", !message);
+  els.loginMessage.classList.toggle("is-error", isError);
 }
 
 function getStateStorageKey() {
