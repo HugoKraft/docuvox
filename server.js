@@ -2,6 +2,12 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
+loadEnvFile();
+
+const documentHandler = require("./api/document");
+const authHandler = require("./api/auth");
+const documentsHandler = require("./api/documents");
+
 const root = process.cwd();
 const port = Number(process.env.PORT || 5173);
 const host = process.env.HOST || "127.0.0.1";
@@ -16,8 +22,24 @@ const types = {
   ".png": "image/png",
 };
 
-const server = http.createServer((request, response) => {
+const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
+
+  if (url.pathname === "/api/document") {
+    await documentHandler(request, response);
+    return;
+  }
+
+  if (url.pathname === "/api/auth") {
+    await authHandler(request, response);
+    return;
+  }
+
+  if (url.pathname === "/api/documents") {
+    await documentsHandler(request, response);
+    return;
+  }
+
   const pathname = url.pathname === "/" ? "/index.html" : decodeURIComponent(url.pathname);
   const filePath = path.normalize(path.join(root, pathname));
 
@@ -54,3 +76,19 @@ server.listen(port, host, () => {
   console.log(`DocuVox running at http://${host}:${port}`);
   console.log("For phone testing on the same network, publish via HTTPS or use a secure tunnel.");
 });
+
+function loadEnvFile() {
+  const envPath = path.join(process.cwd(), ".env");
+  if (!fs.existsSync(envPath)) return;
+
+  const lines = fs.readFileSync(envPath, "utf8").split(/\r?\n/);
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) return;
+    const separator = trimmed.indexOf("=");
+    if (separator === -1) return;
+    const key = trimmed.slice(0, separator).trim();
+    const value = trimmed.slice(separator + 1).trim().replace(/^["']|["']$/g, "");
+    if (key && !process.env[key]) process.env[key] = value;
+  });
+}
