@@ -191,7 +191,9 @@ async function authenticate(action) {
 
     if (result.requiresEmailConfirmation) {
       els.loginPassword.value = "";
-      showLoginMessage("Bitte bestätige deine E-Mail-Adresse.");
+      showLoginMessage(
+        result.message || "Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse. Wir haben Ihnen eine Bestätigungsmail gesendet."
+      );
       return;
     }
 
