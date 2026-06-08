@@ -151,6 +151,7 @@ async function bootApp() {
   }
 
   state = loadState();
+  await refreshCloudDocuments();
   updateUserUi();
   renderInitialView();
 }
@@ -211,6 +212,7 @@ async function authenticate(action) {
 
     localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
     state = loadState();
+    await refreshCloudDocuments();
     updateUserUi();
     els.loginPassword.value = "";
     showLoginMessage("");
@@ -345,7 +347,7 @@ function pickCount(button) {
   els.patientCount.value = button.dataset.count;
 }
 
-function createDayList(event) {
+async function createDayList(event) {
   event.preventDefault();
   const count = Number(els.patientCount.value);
 
@@ -372,6 +374,7 @@ function createDayList(event) {
   };
   currentPatientId = null;
   saveState();
+  await refreshCloudDocuments();
   renderList();
   showView("list");
 }
@@ -559,6 +562,7 @@ async function createDocumentation() {
     patient.updatedAt = new Date().toISOString();
     patient.status = "done";
     renderDocumentation(documentation);
+    await saveDocumentToCloud(patient);
     showDictationSuccess();
     els.aiState.innerHTML = "<span></span>KI aktiv";
     els.aiState.classList.remove("hidden");
@@ -619,7 +623,7 @@ function handleEditPanelAction() {
   createDocumentation();
 }
 
-function saveEditedDocumentation() {
+async function saveEditedDocumentation() {
   const patient = getCurrentPatient();
   if (!patient) return;
 
@@ -635,6 +639,7 @@ function saveEditedDocumentation() {
   patient.documentationUpdatedAt = new Date().toISOString();
   patient.lastManualEditAt = new Date().toISOString();
   patient.updatedAt = new Date().toISOString();
+  await saveDocumentToCloud(patient);
   renderDocumentation(patient.documentation);
   els.copyState.classList.add("hidden");
   els.aiState.innerHTML = "<span></span>Bearbeitet";
@@ -777,8 +782,9 @@ function getNextOpenPatient() {
   return state.patients.find((patient) => patient.id > currentPatientId && !patient.documentation);
 }
 
-function showList() {
+async function showList() {
   if (isRecording) stopDictation(false);
+  await refreshCloudDocuments();
   renderList();
   showView("list");
 }
@@ -1080,6 +1086,90 @@ function escapeHtml(value) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function refreshCloudDocuments() {
+  if (!currentUser?.accessToken) return;
+
+  try {
+    const response = await fetch(`/api/documents?date=${encodeURIComponent(state.date || today())}`, {
+      headers: {
+        Authorization: `Bearer ${currentUser.accessToken}`,
+      },
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Cloud-Dokumente konnten nicht geladen werden.");
+
+    mergeCloudDocuments(data.documents || []);
+    saveState();
+  } catch {
+    toast("Cloud-Dokumente konnten nicht geladen werden. Lokale Daten bleiben aktiv.");
+  }
+}
+
+async function saveDocumentToCloud(patient) {
+  if (!currentUser?.accessToken || !patient?.documentation) return;
+
+  try {
+    const response = await fetch("/api/documents", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${currentUser.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        userId: currentUser.userId,
+        patientNumber: patient.id,
+        content: patient.documentation,
+        date: state.date || today(),
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Cloud-Speicherung fehlgeschlagen.");
+  } catch {
+    toast("Cloud-Speicherung fehlgeschlagen. Dokumentation bleibt lokal gespeichert.");
+  }
+}
+
+function mergeCloudDocuments(documents) {
+  if (!Array.isArray(documents) || !documents.length) return;
+
+  const maxPatientNumber = Math.max(
+    state.patients.length,
+    ...documents.map((document) => Number(document.patient_number) || 0)
+  );
+
+  if (maxPatientNumber > state.patients.length) {
+    const now = new Date().toISOString();
+    for (let index = state.patients.length; index < maxPatientNumber; index += 1) {
+      state.patients.push({
+        id: index + 1,
+        rawText: "",
+        documentation: "",
+        documentationEditCount: 0,
+        patientLabel: `Patient ${index + 1}`,
+        updatedAt: now,
+        status: "open",
+      });
+    }
+  }
+
+  documents.forEach((document) => {
+    const patientNumber = Number(document.patient_number);
+    const patient = state.patients.find((item) => item.id === patientNumber);
+    if (!patient || !document.content) return;
+
+    patient.documentation = String(document.content);
+    patient.status = "done";
+    patient.documentationUpdatedAt = document.created_at || patient.documentationUpdatedAt || new Date().toISOString();
+    patient.updatedAt = patient.documentationUpdatedAt;
+  });
+
+  state.date = state.date || today();
+  state.dayId = state.dayId || `${state.date}-${currentUser?.userId || "local"}`;
+  state.userId = currentUser?.userId || null;
 }
 
 function getCurrentPatient() {
