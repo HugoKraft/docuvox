@@ -1,4 +1,9 @@
 const SUPABASE_AUTH_VERSION = "docuvox-auth-supabase-v1";
+const DOCUVOX_SUPABASE_URL = "https://cnshqztlaxmjahurxbgd.supabase.co";
+const EMAIL_CONFIRMATION_REQUIRED_MESSAGE =
+  "Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse.";
+const EMAIL_CONFIRMATION_SENT_MESSAGE =
+  "Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse. Wir haben Ihnen eine Bestätigungsmail gesendet.";
 
 module.exports = async function handler(request, response) {
   if (request.method !== "POST") {
@@ -19,9 +24,9 @@ module.exports = async function handler(request, response) {
       return sendJson(response, 400, { error: "Bitte E-Mail-Adresse und Passwort prüfen." });
     }
 
-    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    if (!process.env.SUPABASE_ANON_KEY) {
       return sendJson(response, 503, {
-        error: "Login ist noch nicht konfiguriert. Bitte Supabase Auth Environment Variables setzen.",
+        error: "Login ist noch nicht konfiguriert. Bitte SUPABASE_ANON_KEY setzen.",
         authVersion: SUPABASE_AUTH_VERSION,
       });
     }
@@ -48,12 +53,23 @@ async function signUpWithSupabase({ email, password, response }) {
     },
   });
 
-  const session = createSession(payload);
+  const user = payload.user || payload;
+
+  if (!isEmailConfirmed(user)) {
+    return sendJson(response, 200, {
+      session: null,
+      requiresEmailConfirmation: true,
+      message: EMAIL_CONFIRMATION_SENT_MESSAGE,
+      authVersion: SUPABASE_AUTH_VERSION,
+    });
+  }
+
+  const session = createSession(payload, user);
 
   return sendJson(response, 200, {
     session,
-    requiresEmailConfirmation: !session,
-    message: session ? "Konto erstellt." : "Bitte bestätige deine E-Mail-Adresse.",
+    requiresEmailConfirmation: false,
+    message: "Konto erstellt.",
     authVersion: SUPABASE_AUTH_VERSION,
   });
 }
@@ -67,7 +83,18 @@ async function signInWithSupabase({ email, password, response }) {
     },
   });
 
-  const session = createSession(payload);
+  const accessToken = payload.access_token || "";
+  const user = accessToken ? await fetchSupabaseUser(accessToken) : payload.user;
+
+  if (!isEmailConfirmed(user)) {
+    return sendJson(response, 403, {
+      error: EMAIL_CONFIRMATION_REQUIRED_MESSAGE,
+      requiresEmailConfirmation: true,
+      authVersion: SUPABASE_AUTH_VERSION,
+    });
+  }
+
+  const session = createSession(payload, user);
 
   if (!session) {
     return sendJson(response, 401, {
@@ -83,16 +110,24 @@ async function signInWithSupabase({ email, password, response }) {
   });
 }
 
+async function fetchSupabaseUser(accessToken) {
+  return supabaseRequest("/auth/v1/user", {
+    method: "GET",
+    accessToken,
+  });
+}
+
 async function supabaseRequest(path, options) {
-  const baseUrl = process.env.SUPABASE_URL.replace(/\/+$/, "");
+  const baseUrl = resolveSupabaseUrl();
+  const anonKey = String(process.env.SUPABASE_ANON_KEY || "").trim();
   const response = await fetch(`${baseUrl}${path}`, {
     method: options.method,
     headers: {
-      apikey: process.env.SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${process.env.SUPABASE_ANON_KEY}`,
+      apikey: anonKey,
+      Authorization: `Bearer ${options.accessToken || anonKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(options.body || {}),
+    body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
   const payload = await response.json().catch(() => ({}));
@@ -104,8 +139,35 @@ async function supabaseRequest(path, options) {
   return payload;
 }
 
-function createSession(payload) {
-  const user = payload.user || payload;
+function resolveSupabaseUrl() {
+  const rawValue = String(process.env.SUPABASE_URL || "").trim().replace(/^["']|["']$/g, "");
+
+  if (!rawValue || isKnownPlaceholderSupabaseUrl(rawValue)) {
+    return DOCUVOX_SUPABASE_URL;
+  }
+
+  try {
+    const url = new URL(rawValue);
+    if (url.protocol !== "https:" || !url.hostname.endsWith(".supabase.co")) {
+      throw new Error("SUPABASE_URL must be an HTTPS Supabase project URL");
+    }
+    return url.origin;
+  } catch {
+    throw new Error("SUPABASE_URL ist ungültig. Erwartet wird z. B. https://cnshqztlaxmjahurxbgd.supabase.co.");
+  }
+}
+
+function isKnownPlaceholderSupabaseUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.hostname.toLowerCase() === "abcde.supabase.co";
+  } catch {
+    return false;
+  }
+}
+
+function createSession(payload, verifiedUser) {
+  const user = verifiedUser || payload.user || payload;
   const accessToken = payload.access_token || "";
   const refreshToken = payload.refresh_token || "";
 
@@ -120,6 +182,10 @@ function createSession(payload) {
   };
 }
 
+function isEmailConfirmed(user) {
+  return Boolean(user?.email_confirmed_at || user?.confirmed_at);
+}
+
 function mapSupabaseError(payload) {
   const message = String(payload.error_description || payload.msg || payload.message || "").toLowerCase();
 
@@ -132,7 +198,7 @@ function mapSupabaseError(payload) {
   }
 
   if (message.includes("email not confirmed")) {
-    return "Bitte bestätige zuerst deine E-Mail-Adresse.";
+    return EMAIL_CONFIRMATION_REQUIRED_MESSAGE;
   }
 
   return payload.error_description || payload.msg || payload.message || "Authentifizierung fehlgeschlagen.";
