@@ -16,12 +16,8 @@ module.exports = async function handler(request, response) {
     const email = normalizeEmail(body.email);
     const password = String(body.password || "");
 
-    if (!["login", "signup"].includes(action)) {
+    if (!["login", "signup", "refresh"].includes(action)) {
       return sendJson(response, 400, { error: "Unbekannte Auth-Aktion." });
-    }
-
-    if (!isValidEmail(email) || password.length < 1) {
-      return sendJson(response, 400, { error: "Bitte E-Mail-Adresse und Passwort prüfen." });
     }
 
     if (!process.env.SUPABASE_ANON_KEY) {
@@ -29,6 +25,18 @@ module.exports = async function handler(request, response) {
         error: "Login ist noch nicht konfiguriert. Bitte SUPABASE_ANON_KEY setzen.",
         authVersion: SUPABASE_AUTH_VERSION,
       });
+    }
+
+    if (action === "refresh") {
+      const refreshToken = String(body.refreshToken || "").trim();
+      if (!refreshToken) {
+        return sendJson(response, 400, { error: "Refresh Token fehlt." });
+      }
+      return refreshSupabaseSession({ refreshToken, response });
+    }
+
+    if (!isValidEmail(email) || password.length < 1) {
+      return sendJson(response, 400, { error: "Bitte E-Mail-Adresse und Passwort prüfen." });
     }
 
     if (action === "signup") {
@@ -99,6 +107,41 @@ async function signInWithSupabase({ email, password, response }) {
   if (!session) {
     return sendJson(response, 401, {
       error: "Login fehlgeschlagen. Bitte E-Mail und Passwort prüfen.",
+      authVersion: SUPABASE_AUTH_VERSION,
+    });
+  }
+
+  return sendJson(response, 200, {
+    session,
+    requiresEmailConfirmation: false,
+    authVersion: SUPABASE_AUTH_VERSION,
+  });
+}
+
+async function refreshSupabaseSession({ refreshToken, response }) {
+  const payload = await supabaseRequest("/auth/v1/token?grant_type=refresh_token", {
+    method: "POST",
+    body: {
+      refresh_token: refreshToken,
+    },
+  });
+
+  const accessToken = payload.access_token || "";
+  const user = accessToken ? await fetchSupabaseUser(accessToken) : payload.user;
+
+  if (!isEmailConfirmed(user)) {
+    return sendJson(response, 403, {
+      error: EMAIL_CONFIRMATION_REQUIRED_MESSAGE,
+      requiresEmailConfirmation: true,
+      authVersion: SUPABASE_AUTH_VERSION,
+    });
+  }
+
+  const session = createSession(payload, user);
+
+  if (!session) {
+    return sendJson(response, 401, {
+      error: "Session konnte nicht erneuert werden. Bitte erneut einloggen.",
       authVersion: SUPABASE_AUTH_VERSION,
     });
   }
