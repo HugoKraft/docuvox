@@ -263,6 +263,52 @@ async function requestAuth(action, email, password) {
   return data;
 }
 
+async function ensureFreshAccessToken() {
+  if (!currentUser?.accessToken) return false;
+
+  const refreshWindowMs = 60_000;
+  if (currentUser.expiresAt && Date.now() < currentUser.expiresAt - refreshWindowMs) {
+    return true;
+  }
+
+  if (!currentUser.refreshToken) return false;
+
+  try {
+    const response = await fetch("/api/auth", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "refresh",
+        refreshToken: currentUser.refreshToken,
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.session?.accessToken) {
+      throw new Error(data.error || "Session konnte nicht erneuert werden.");
+    }
+
+    currentUser = {
+      userId: data.session.userId,
+      email: data.session.email,
+      accessToken: data.session.accessToken || "",
+      refreshToken: data.session.refreshToken || currentUser.refreshToken,
+      expiresAt: data.session.expiresAt || null,
+    };
+
+    localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+    return true;
+  } catch {
+    localStorage.removeItem(SESSION_KEY);
+    currentUser = null;
+    toast("Session abgelaufen. Bitte erneut einloggen.");
+    showLogin();
+    return false;
+  }
+}
+
 function setAuthBusy(active) {
   els.loginForm.classList.toggle("is-busy", active);
   els.loginForm.querySelectorAll("button, input").forEach((element) => {
@@ -1090,6 +1136,7 @@ function escapeRegExp(value) {
 
 async function refreshCloudDocuments() {
   if (!currentUser?.accessToken) return;
+  if (!(await ensureFreshAccessToken())) return;
 
   try {
     const response = await fetch(`/api/documents?date=${encodeURIComponent(state.date || today())}`, {
@@ -1110,6 +1157,7 @@ async function refreshCloudDocuments() {
 
 async function saveDocumentToCloud(patient) {
   if (!currentUser?.accessToken || !patient?.documentation) return;
+  if (!(await ensureFreshAccessToken())) return;
 
   try {
     const response = await fetch("/api/documents", {
