@@ -61,13 +61,18 @@ async function listDocuments({ accessToken, date }) {
 
 async function saveDocument({ accessToken, userId, patientNumber, content, date }) {
   const { start, end } = getDayBounds(date);
-  const deletePath = `/rest/v1/documents?patient_number=eq.${patientNumber}&created_at=gte.${encodeURIComponent(start)}&created_at=lt.${encodeURIComponent(end)}`;
+  const deletePath = `/rest/v1/documents?user_id=eq.${encodeURIComponent(userId)}&patient_number=eq.${patientNumber}&created_at=gte.${encodeURIComponent(start)}&created_at=lt.${encodeURIComponent(end)}`;
 
-  await supabaseRequest(deletePath, {
-    method: "DELETE",
-    accessToken,
-    prefer: "return=minimal",
-  });
+  try {
+    await supabaseRequest(deletePath, {
+      method: "DELETE",
+      accessToken,
+      prefer: "return=minimal",
+    });
+  } catch (error) {
+    console.error("Supabase documents DELETE failed:", error.message || error);
+    throw error;
+  }
 
   const inserted = await supabaseRequest("/rest/v1/documents?select=id,user_id,patient_number,content,created_at", {
     method: "POST",
