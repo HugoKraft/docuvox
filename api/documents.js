@@ -63,6 +63,14 @@ async function saveDocument({ accessToken, userId, patientNumber, content, date 
   const { start, end } = getDayBounds(date);
   const deletePath = `/rest/v1/documents?user_id=eq.${encodeURIComponent(userId)}&patient_number=eq.${patientNumber}&created_at=gte.${encodeURIComponent(start)}&created_at=lt.${encodeURIComponent(end)}`;
 
+  console.log("SUPABASE DELETE REQUEST", {
+    path: deletePath,
+    userId,
+    patientNumber,
+    date,
+    hasAccessToken: Boolean(accessToken),
+  });
+
   try {
     await supabaseRequest(deletePath, {
       method: "DELETE",
@@ -74,7 +82,17 @@ async function saveDocument({ accessToken, userId, patientNumber, content, date 
     throw error;
   }
 
-  const inserted = await supabaseRequest("/rest/v1/documents?select=id,user_id,patient_number,content,created_at", {
+  const insertPath = "/rest/v1/documents?select=id,user_id,patient_number,content,created_at";
+
+  console.log("SUPABASE INSERT REQUEST", {
+    path: insertPath,
+    userId,
+    patientNumber,
+    contentLength: content.length,
+    hasAccessToken: Boolean(accessToken),
+  });
+
+  const inserted = await supabaseRequest(insertPath, {
     method: "POST",
     accessToken,
     prefer: "return=representation",
@@ -101,17 +119,40 @@ async function supabaseRequest(path, options) {
     headers.Prefer = options.prefer;
   }
 
+  if (["DELETE", "POST"].includes(options.method)) {
+    console.log("SUPABASE REQUEST", {
+      method: options.method,
+      path,
+      hasAuthorizationHeader: Boolean(headers.Authorization),
+      hasAnonKey: Boolean(anonKey),
+      bodyKeys: options.body ? Object.keys(options.body) : [],
+    });
+  }
+
   const response = await fetch(`${baseUrl}${path}`, {
     method: options.method,
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
+  if (["DELETE", "POST"].includes(options.method)) {
+    console.log("SUPABASE RESPONSE", {
+      method: options.method,
+      status: response.status,
+      path,
+    });
+  }
+
   if (response.status === 204) return null;
 
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    console.error("SUPABASE ERROR", {
+      status: response.status,
+      payload,
+      path,
+    });
     throw new Error(payload.message || payload.error_description || "Supabase documents request failed");
   }
 
