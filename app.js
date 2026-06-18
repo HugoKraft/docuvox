@@ -63,7 +63,6 @@ function setupGeneratedUi() {
     <div class="login-card">
       <p class="eyebrow">Login</p>
       <h2>Bei DocuVox anmelden</h2>
-      <p class="login-note">Pilotphase: Bitte keine vollständigen Patientennamen verwenden.</p>
       <form id="loginForm" class="login-form">
         <label class="field-label" for="loginEmail">E-Mail-Adresse</label>
         <input id="loginEmail" type="email" autocomplete="email" placeholder="name@praxis.ch" required />
