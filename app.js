@@ -3,6 +3,7 @@ const BACKUP_KEY = "docuvox-last-day-backup-v1";
 const SESSION_KEY = "docuvox-auth-session-v1";
 const USER_STATE_PREFIX = "docuvox_state_";
 const USER_BACKUP_PREFIX = "docuvox_backup_";
+const HISTORY_STATE_KEY = "docuvoxView";
 
 let currentUser = loadSessionUser();
 let state = createEmptyState();
@@ -141,6 +142,7 @@ function bindEvents() {
   els.restoreStartButton.addEventListener("click", restoreLastDayBackup);
   els.restoreListButton.addEventListener("click", restoreLastDayBackup);
   els.rawText.addEventListener("input", handleEditTextInput);
+  window.addEventListener("popstate", handleBrowserBack);
 }
 
 async function bootApp() {
@@ -422,6 +424,7 @@ async function createDayList(event) {
   await refreshCloudDocuments();
   renderList();
   showView("list");
+  replaceAppHistory("list");
 }
 
 function resetDay() {
@@ -453,8 +456,10 @@ function renderInitialView() {
   if (state.patients.length) {
     renderList();
     showView("list");
+    replaceAppHistory("list");
   } else {
     showView("start");
+    replaceAppHistory("start");
   }
 }
 
@@ -512,7 +517,7 @@ function getStatusLabel(patient, active) {
   return "⚪ offen";
 }
 
-function openPatient(patientId) {
+function openPatient(patientId, historyMode = "push") {
   if (isRecording) stopDictation(false);
   currentPatientId = patientId;
   state.activePatientId = patientId;
@@ -534,6 +539,8 @@ function openPatient(patientId) {
   updateDetailActions();
   saveState();
   showView("detail");
+  if (historyMode === "push") pushAppHistory("detail", patientId);
+  if (historyMode === "replace") replaceAppHistory("detail", patientId);
 }
 
 function startDictation() {
@@ -803,7 +810,7 @@ function saveCurrentRawText() {
 function goToNextPatient() {
   const next = getNextOpenPatient();
   if (next) {
-    openPatient(next.id);
+    openPatient(next.id, "replace");
   } else {
     showList();
   }
@@ -832,6 +839,7 @@ async function showList() {
   await refreshCloudDocuments();
   renderList();
   showView("list");
+  replaceAppHistory("list");
 }
 
 function showAllDocs() {
@@ -1230,6 +1238,53 @@ function showView(view) {
   els.detailView.classList.toggle("hidden", view !== "detail");
   els.allDocsView.classList.toggle("hidden", view !== "all");
   updateBackupControls();
+}
+
+function pushAppHistory(view, patientId = null) {
+  updateAppHistory("push", view, patientId);
+}
+
+function replaceAppHistory(view, patientId = null) {
+  updateAppHistory("replace", view, patientId);
+}
+
+function updateAppHistory(mode, view, patientId = null) {
+  if (!window.history?.pushState || !window.history?.replaceState) return;
+  const historyState = { [HISTORY_STATE_KEY]: view, patientId };
+  try {
+    if (mode === "push") {
+      window.history.pushState(historyState, "", window.location.href);
+    } else {
+      window.history.replaceState(historyState, "", window.location.href);
+    }
+  } catch {
+    // History state is a navigation enhancement only; core app flow must keep working.
+  }
+}
+
+function handleBrowserBack(event) {
+  if (!currentUser) {
+    showLogin();
+    return;
+  }
+
+  const historyView = event.state?.[HISTORY_STATE_KEY];
+  const patientId = Number(event.state?.patientId);
+
+  if (historyView === "detail" && state.patients.some((patient) => patient.id === patientId)) {
+    openPatient(patientId, "none");
+    return;
+  }
+
+  if (state.patients.length) {
+    if (isRecording) stopDictation(false);
+    renderList();
+    showView("list");
+    return;
+  }
+
+  currentPatientId = null;
+  showView("start");
 }
 
 function loadState() {
