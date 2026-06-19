@@ -397,6 +397,7 @@ function pickCount(button) {
 async function createDayList(event) {
   event.preventDefault();
   const count = Number(els.patientCount.value);
+  const now = new Date().toISOString();
 
   if (!Number.isInteger(count) || count < 1) {
     toast("Bitte eine Patientenzahl eingeben.");
@@ -407,7 +408,8 @@ async function createDayList(event) {
     date: today(),
     dayId: `${today()}-${currentUser?.userId || "local"}`,
     userId: currentUser?.userId || null,
-    updatedAt: new Date().toISOString(),
+    updatedAt: now,
+    cloudIgnoreBefore: now,
     activePatientId: null,
     patients: Array.from({ length: count }, (_, index) => ({
       id: index + 1,
@@ -415,7 +417,7 @@ async function createDayList(event) {
       documentation: "",
       documentationEditCount: 0,
       patientLabel: `Patient ${index + 1}`,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
       status: "open",
     })),
   };
@@ -1190,10 +1192,15 @@ async function saveDocumentToCloud(patient) {
 
 function mergeCloudDocuments(documents) {
   if (!Array.isArray(documents) || !documents.length) return;
+  const relevantDocuments = state.cloudIgnoreBefore
+    ? documents.filter((document) => !document.created_at || new Date(document.created_at) >= new Date(state.cloudIgnoreBefore))
+    : documents;
+
+  if (!relevantDocuments.length) return;
 
   const maxPatientNumber = Math.max(
     state.patients.length,
-    ...documents.map((document) => Number(document.patient_number) || 0)
+    ...relevantDocuments.map((document) => Number(document.patient_number) || 0)
   );
 
   if (maxPatientNumber > state.patients.length) {
@@ -1211,7 +1218,7 @@ function mergeCloudDocuments(documents) {
     }
   }
 
-  documents.forEach((document) => {
+  relevantDocuments.forEach((document) => {
     const patientNumber = Number(document.patient_number);
     const patient = state.patients.find((item) => item.id === patientNumber);
     if (!patient || !document.content) return;
