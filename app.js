@@ -877,8 +877,8 @@ async function copyText(text, message) {
 }
 
 async function copyDocumentation(documentation, patientId, message) {
-  const plainText = formatDocumentationForClipboard(documentation, patientId);
-  const html = formatDocumentationHtmlForClipboard(documentation, patientId);
+  const plainText = formatDocumentationForClipboard(documentation, patientId, false);
+  const html = formatDocumentationHtmlForClipboard(documentation, patientId, false);
   return copyRichText(plainText, html, message);
 }
 
@@ -942,11 +942,11 @@ function buildPlainTextDocumentation(patient) {
   return formatDocumentationForClipboard(patient.documentation, patient.id);
 }
 
-function formatDocumentationForClipboard(documentation, patientId) {
+function formatDocumentationForClipboard(documentation, patientId, includePatientTitle = true) {
   const patientTitle = extractPatientTitle(documentation);
   const fallbackTitle = patientId ? `Patient ${patientId}` : patientTitle;
   const sections = extractDocumentationSections(documentation);
-  const lines = [fallbackTitle || patientTitle || "Patient"];
+  const lines = includePatientTitle ? [fallbackTitle || patientTitle || "Patient"] : [];
 
   sections.forEach((section) => {
     const points = section.points
@@ -965,7 +965,7 @@ function formatDocumentationForClipboard(documentation, patientId) {
     .trim();
 }
 
-function formatDocumentationHtmlForClipboard(documentation, patientId) {
+function formatDocumentationHtmlForClipboard(documentation, patientId, includePatientTitle = true) {
   const patientTitle = escapeHtml(patientId ? `Patient ${patientId}` : extractPatientTitle(documentation));
   const sections = extractDocumentationSections(documentation);
   const sectionHtml = sections
@@ -991,7 +991,7 @@ function formatDocumentationHtmlForClipboard(documentation, patientId) {
         </style>
       </head>
       <body>
-        <p style="margin: 0 0 12px 0;">${patientTitle}</p>
+        ${includePatientTitle ? `<p style="margin: 0 0 12px 0;">${patientTitle}</p>` : ""}
         ${sectionHtml}
       </body>
     </html>
