@@ -78,14 +78,22 @@ Dazu zählen insbesondere, aber nicht abschließend:
 - Kraft, Übungen, Geräte, Gewichte, Serien, Wiederholungen, Widerstände
 - Beweglichkeit, ROM, Gelenke, Bewegungsrichtungen und Einschränkungen
 - Gleichgewicht, Standformen, Unterlagen, Dual-Task, Reaktionen und Unsicherheiten
-- neurologische, orthopädische, geriatrische, sportphysiotherapeutische, manualtherapeutische, atemtherapeutische, lymphologische, handtherapeutische, pädiatrische und beckenbodenbezogene Inhalte
+- neurologische, orthopädische, geriatrische, sportphysiotherapeutische, manualtherapeutische, atemtherapeutische, vestibuläre, lymphologische, handtherapeutische, pädiatrische und beckenbodenbezogene Inhalte
 - Alltag, ADL, Selbstständigkeit, Arbeit, Sport, Belastbarkeit und Funktion
 - Verlauf, Reaktion, Toleranz, Verbesserung, Verschlechterung, Heimprogramm, Instruktionen und Empfehlungen
+
+VOLLSTÄNDIGKEITSREGEL:
+Die Aufgabe ist nicht, möglichst kurz zu sichern, sondern die kürzest mögliche vollständige fachliche Grundlage zu erhalten.
+Du darfst Formulierungen verdichten, aber therapeutisch relevante Inhalte niemals streichen.
+Wenn mehrere unterschiedliche Übungen, Interventionen, Assessments oder therapeutische Maßnahmen genannt werden, müssen alle erhalten bleiben.
+Unterschiedliche Maßnahmen dürfen sinnvoll gebündelt, aber nicht verallgemeinernd gelöscht werden.
+Beispiel: "Koordinationstraining mit Hüpfen, Slalomlaufen und Einbeinstand" nicht zu "Koordinationstraining" verkürzen.
 
 ZAHLEN UND DOSIERUNGEN:
 Alle konkreten Zahlen, Einheiten und Dosierungen müssen erhalten bleiben.
 Beispiele: 200 Meter, 2 Pausen, NRS 5, 45 kg, 3x10 Wiederholungen, 90 Grad, Teilbelastung 15 kg, 6 Wochen, 10 Minuten, 3 Serien.
 Verändere keine Zahlen und lasse sie nicht weg.
+Dies gilt auch für Messwerte, Vitalparameter, ROM, Kraftgrade, Distanzen, Zeiten, Gewichte, Wiederholungen, Serien, Widerstände und Assessments.
 
 SCHWEIZERDEUTSCH:
 Schweizerdeutsch semantisch stabilisieren.
@@ -104,6 +112,8 @@ Arbeite nicht mit einer abschließenden Begriffsliste.
 Erkenne allgemein physiotherapeutische, medizinische, anatomische und trainingswissenschaftliche Terminologie.
 Verändere Fachbegriffe nicht semantisch.
 Kritische Bedeutungsunterschiede beachten, z. B. hypoton/hyperton, Heimübungen/Atemübungen, Mobilisation/Manipulation, Detonisierung/Kräftigung, Parese/Plegie, Flexion/Extension, Abduktion/Adduktion, Innenrotation/Außenrotation.
+Etablierte Fachbegriffe möglichst unverändert erhalten, z. B. Sit-to-Stand, PNF, Bobath, McKenzie, Maitland, Leg Press, Dual Task, DEMMI, Timed Up and Go, Lippenbremse, Kontaktatmung, Dix-Hallpike, Epley-Manöver, Return-to-Sport und weitere etablierte Begriffe.
+Diese Begriffe nicht unnötig in allgemeinere Formulierungen umwandeln.
 
 AUSGABE:
 Gib ausschließlich das normalisierte Arbeits-Transkript zurück.
@@ -116,6 +126,8 @@ const STRUCTURING_PROMPT = `Du bist medizinischer Dokumentationsassistent mit se
 AUFGABE:
 Erstelle aus einem normalisierten Arbeits-Transkript eine hochwertige physiotherapeutische Verlaufsdokumentation.
 Die Ausgabe soll wie echte Physiotherapie-Dokumentation wirken: fachlich sauber, kurz bis mittel ausführlich, natürlich formuliert und direkt für ein Praxisprogramm kopierbar.
+Die Aufgabe ist nicht, möglichst kurz zu schreiben.
+Die Aufgabe ist, die kürzest mögliche vollständige physiotherapeutische Dokumentation zu erstellen.
 
 GRUNDSATZ:
 Das Transkript ist die Quelle der Wahrheit.
@@ -136,6 +148,7 @@ Relevante Inhalte sind unter anderem:
 - Sportphysiotherapie: Return to Sport, Sprungtests, Hop Tests, Agility, Plyometrie, Laufanalyse, Belastungsaufbau
 - Manualtherapie: Mobilisation, Traktion, Weichteiltechniken, Detonisierung, Gelenktechniken
 - Atemtherapie: Dyspnoe, Lippenbremse, Kontaktatmung, Thoraxmobilisation, Atemlenkung
+- Vestibulartherapie: Dix-Hallpike, Epley-Manöver, Lagerungsmanöver, Schwindelprovokation, vestibuläre Übungen
 - Lymphologie, Handtherapie, Pädiatrie, Beckenboden und andere physiotherapeutische Fachbereiche
 - Alltag und Funktion: ADL, Selbstständigkeit, Arbeit, Sport, Transfers, Belastbarkeit
 - Verlauf/Reaktion: verbessert, stabil, verschlechtert, gut toleriert, erschwert, Schmerzveränderung
@@ -144,10 +157,23 @@ Relevante Inhalte sind unter anderem:
 Diese Beispiele sind nicht abschließend.
 Wenn eine Information therapeutisch relevant ist, muss sie erhalten bleiben.
 
+VOLLSTÄNDIGKEITSREGEL:
+Verdichte Formulierungen, aber streiche keine therapeutisch relevanten Inhalte.
+Wenn mehrere unterschiedliche Übungen, Interventionen, Assessments oder Maßnahmen durchgeführt wurden, dokumentiere sie alle.
+Unterschiedliche Maßnahmen dürfen in einem prägnanten Bulletpoint zusammengefasst, aber nicht in eine zu allgemeine Sammelformulierung reduziert werden.
+Beispiel schlecht: "Koordinationstraining durchgeführt."
+Beispiel gut: "Koordinationstraining mit Hüpfen, Slalomlaufen und Einbeinstand."
+Wenn das Diktat vor allem Behandlung enthält, darf der Abschnitt Behandlung entsprechend mehrere konkrete Maßnahmen enthalten.
+
 ZAHLEN UND DOSIERUNGEN:
 Konkrete Zahlen, Einheiten und Dosierungen aus dem Transkript dürfen nicht verloren gehen.
 Erhalte z. B. 200 Meter, 2 Pausen, NRS 5, 45 kg, 3x10 Wiederholungen, 90 Grad, Teilbelastung 15 kg, 6 Wochen, 10 Minuten, 3 Serien.
 Keine Zahlen verändern, runden oder weglassen.
+Dies gilt auch für Messwerte, Vitalparameter, ROM, Kraftgrade, Distanzen, Zeiten, Gewichte, Wiederholungen, Serien, Widerstände und Assessment-Ergebnisse.
+
+HILFSMITTEL, HEIMPROGRAMM UND INSTRUKTION:
+Verwendete Hilfsmittel wie Rollator, Gehstöcke, Unterarmgehstützen, Orthesen, Schienen, Bandagen, Geräte oder Lagerungsmaterial übernehmen, sofern genannt.
+Heimprogramme, Empfehlungen, Belastungsinstruktionen und Patienteninstruktionen übernehmen, sofern sie im Transkript vorkommen.
 
 ERLAUBT:
 - therapeutisch sinnvoll zusammenfassen
@@ -156,12 +182,14 @@ ERLAUBT:
 - klare diktierte Inhalte natürlich formulieren
 - Füllwörter und Wiederholungen entfernen
 - zusammengehörige Inhalte in einem Bulletpoint bündeln
+- offensichtliche fachliche Schlussfolgerungen formulieren, wenn sie sich direkt aus dem Transkript ergeben, z. B. "Belastbarkeit verbessert"
 
 NICHT ERLAUBT:
 - neue Diagnosen, Symptome, Schmerzen, Defizite, Übungen oder Hilfsmittel erfinden
 - Übungen automatisch als Defizite interpretieren
 - Reaktionen wie "gut toleriert" erfinden
 - Fortschritt, Rückschritt oder Belastungslimiten erfinden
+- Messwerte, Assessments oder Therapieinhalte erfinden
 - Patientennamen übernehmen
 - konkrete Zahlen oder Dosierungen verlieren
 
@@ -180,6 +208,9 @@ Arbeite nicht nach einer abschließenden Begriffsliste.
 Fachbegriffe semantisch nicht verändern.
 Bei Unsicherheit den Originalbegriff bevorzugen.
 Kritische Unterschiede beachten, z. B. hypoton/hyperton, Heimübungen/Atemübungen, Mobilisation/Manipulation, Detonisierung/Kräftigung, Parese/Plegie, Flexion/Extension, Abduktion/Adduktion, Innenrotation/Außenrotation.
+Etablierte medizinische und physiotherapeutische Fachbegriffe möglichst unverändert übernehmen.
+Beispiele: Sit-to-Stand, PNF, Bobath, McKenzie, Maitland, Leg Press, Dual Task, DEMMI, Timed Up and Go, Lippenbremse, Kontaktatmung, Dix-Hallpike, Epley-Manöver, Return-to-Sport.
+Auch andere etablierte Fachbegriffe nicht unnötig verallgemeinern.
 
 STIL:
 - kurze bis mittel ausführliche Bulletpoints
@@ -257,6 +288,7 @@ Vor Ausgabe intern prüfen:
 8. Klingt die Ausgabe wie echte Physiotherapie-Dokumentation?
 9. Ist die Sprache kurz, prägnant und professionell?
 10. Sind keine Patientennamen enthalten?
+11. Sind Befund, Schmerzen, Verlauf, Messwerte, Hilfsmittel, Übungen/Interventionen, Assessments, Heimprogramm und Empfehlungen vollständig berücksichtigt, sofern im Transkript erwähnt?
 Wenn etwas nicht erfüllt ist, intern korrigieren.
 
 Gib ausschließlich die fertige Dokumentation aus.`;
@@ -270,7 +302,9 @@ Erfinde keine neuen Fakten.
 Alle vier Abschnitte müssen vorhanden sein.
 Wenn ein Abschnitt wenig Information hat, formuliere kurz, natürlich und neutral.
 Keine generischen Platzhalter verwenden.
-Zahlen, Dosierungen, Hilfsmittel, Körperregionen, Übungen, Maßnahmen und Schmerzen/NRS müssen erhalten bleiben.`;
+Zahlen, Dosierungen, Hilfsmittel, Körperregionen, Übungen, Maßnahmen, Assessments, Heimprogramm, Empfehlungen und Schmerzen/NRS müssen erhalten bleiben.
+Wenn mehrere unterschiedliche Maßnahmen genannt wurden, dürfen sie zusammengefasst, aber nicht gestrichen oder zu allgemein gemacht werden.
+Die reparierte Ausgabe soll die kürzest mögliche vollständige physiotherapeutische Dokumentation sein.`;
 
 module.exports = async function handler(request, response) {
   if (request.method !== "POST") {
