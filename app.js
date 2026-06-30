@@ -404,6 +404,30 @@ async function createDayList(event) {
     return;
   }
 
+  if (currentUser) {
+    if (!(await ensureFreshAccessToken())) return;
+
+    try {
+      const payload = await requestDayList({
+        method: "POST",
+        body: {
+          action: "create",
+          patientCount: count,
+        },
+      });
+      state = buildStateFromDayListPayload(payload, state);
+      currentPatientId = null;
+      saveState();
+      renderList();
+      showView("list");
+      replaceAppHistory("list");
+      return;
+    } catch {
+      toast("Cloud nicht erreichbar. Keine neue Tagesliste erstellt.");
+      return;
+    }
+  }
+
   state = {
     date: today(),
     dayId: `${today()}-${currentUser?.userId || "local"}`,
@@ -450,6 +474,19 @@ function confirmNewDay() {
     "Neue Tagesliste starten?\n\nDie aktuelle Tagesliste wird als letzte Tagesliste gesichert und kann wiederhergestellt werden."
   );
   if (!confirmed) return;
+
+  if (currentUser) {
+    if (isRecording) stopDictation(false);
+    currentPatientId = null;
+    state.activePatientId = null;
+    els.patientCount.value = "";
+    document.querySelectorAll("[data-count]").forEach((item) => item.classList.remove("active"));
+    saveState();
+    showView("start");
+    replaceAppHistory("start");
+    return;
+  }
+
   resetDay();
 }
 
@@ -839,9 +876,14 @@ function getNextOpenPatient() {
 async function showList() {
   if (isRecording) stopDictation(false);
   await refreshCloudDocuments();
-  renderList();
-  showView("list");
-  replaceAppHistory("list");
+  if (state.patients.length) {
+    renderList();
+    showView("list");
+    replaceAppHistory("list");
+  } else {
+    showView("start");
+    replaceAppHistory("start");
+  }
 }
 
 function showAllDocs() {
@@ -1145,28 +1187,27 @@ function escapeRegExp(value) {
 
 async function refreshCloudDocuments() {
   if (!currentUser?.accessToken) return;
+  if (isRecording) return;
   if (!(await ensureFreshAccessToken())) return;
 
   try {
-    const response = await fetch(`/api/documents?date=${encodeURIComponent(state.date || today())}`, {
-      headers: {
-        Authorization: `Bearer ${currentUser.accessToken}`,
-      },
-    });
-
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || "Cloud-Dokumente konnten nicht geladen werden.");
-
-    mergeCloudDocuments(data.documents || []);
+    const payload = await requestDayList({ method: "GET" });
+    state = buildStateFromDayListPayload(payload, state);
     saveState();
   } catch {
-    toast("Cloud-Dokumente konnten nicht geladen werden. Lokale Daten bleiben aktiv.");
+    state = state?.patients?.length ? state : loadState();
+    toast("Cloud nicht erreichbar. Lokaler Cache wird angezeigt.");
   }
 }
 
 async function saveDocumentToCloud(patient) {
   if (!currentUser?.accessToken || !patient?.documentation) return;
   if (!(await ensureFreshAccessToken())) return;
+
+  if (!state.dayListId) {
+    toast("Cloud-Tagesliste fehlt. Dokumentation bleibt lokal gespeichert.");
+    return;
+  }
 
   try {
     const response = await fetch("/api/documents", {
@@ -1176,10 +1217,9 @@ async function saveDocumentToCloud(patient) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        userId: currentUser.userId,
+        dayListId: state.dayListId,
         patientNumber: patient.id,
         content: patient.documentation,
-        date: state.date || today(),
       }),
     });
 
@@ -1190,48 +1230,90 @@ async function saveDocumentToCloud(patient) {
   }
 }
 
-function mergeCloudDocuments(documents) {
-  if (!Array.isArray(documents) || !documents.length) return;
-  const relevantDocuments = state.cloudIgnoreBefore
-    ? documents.filter((document) => !document.created_at || new Date(document.created_at) >= new Date(state.cloudIgnoreBefore))
-    : documents;
-
-  if (!relevantDocuments.length) return;
-
-  const maxPatientNumber = Math.max(
-    state.patients.length,
-    ...relevantDocuments.map((document) => Number(document.patient_number) || 0)
-  );
-
-  if (maxPatientNumber > state.patients.length) {
-    const now = new Date().toISOString();
-    for (let index = state.patients.length; index < maxPatientNumber; index += 1) {
-      state.patients.push({
-        id: index + 1,
-        rawText: "",
-        documentation: "",
-        documentationEditCount: 0,
-        patientLabel: `Patient ${index + 1}`,
-        updatedAt: now,
-        status: "open",
-      });
-    }
-  }
-
-  relevantDocuments.forEach((document) => {
-    const patientNumber = Number(document.patient_number);
-    const patient = state.patients.find((item) => item.id === patientNumber);
-    if (!patient || !document.content) return;
-
-    patient.documentation = String(document.content);
-    patient.status = "done";
-    patient.documentationUpdatedAt = document.created_at || patient.documentationUpdatedAt || new Date().toISOString();
-    patient.updatedAt = patient.documentationUpdatedAt;
+async function requestDayList({ method, body = null }) {
+  const response = await fetch("/api/day-lists", {
+    method,
+    headers: {
+      Authorization: `Bearer ${currentUser.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
   });
 
-  state.date = state.date || today();
-  state.dayId = state.dayId || `${state.date}-${currentUser?.userId || "local"}`;
-  state.userId = currentUser?.userId || null;
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || "Tagesliste konnte nicht geladen werden.");
+  }
+
+  return payload;
+}
+
+function buildStateFromDayListPayload(payload, previousState = createEmptyState()) {
+  const dayList = payload?.dayList || null;
+  const backupAvailable = Boolean(payload?.backupAvailable);
+
+  if (!dayList) {
+    currentPatientId = null;
+    return {
+      ...createEmptyState(),
+      backupAvailable,
+    };
+  }
+
+  const patientCount = Math.max(0, Number(dayList.patient_count) || 0);
+  const documents = Array.isArray(payload.documents) ? payload.documents : [];
+  const documentsByPatient = new Map();
+  documents.forEach((document) => {
+    const patientNumber = Number(document.patient_number);
+    if (!Number.isInteger(patientNumber) || patientNumber < 1) return;
+    if (!document.content) return;
+    documentsByPatient.set(patientNumber, document);
+  });
+
+  const sameDayList = previousState?.dayListId === dayList.id || previousState?.dayId === dayList.id;
+  const now = new Date().toISOString();
+  const patients = Array.from({ length: patientCount }, (_, index) => {
+    const id = index + 1;
+    const previousPatient = sameDayList
+      ? previousState.patients?.find((patient) => patient.id === id)
+      : null;
+    const cloudDocument = documentsByPatient.get(id);
+    const documentation = cloudDocument ? String(cloudDocument.content || "") : "";
+    const locallyActive = previousPatient?.status === "active" || previousState?.activePatientId === id;
+    const updatedAt = cloudDocument?.created_at || previousPatient?.updatedAt || dayList.updated_at || now;
+
+    return {
+      id,
+      rawText: previousPatient?.rawText || "",
+      documentation,
+      documentationEditCount: previousPatient?.documentationEditCount || 0,
+      patientLabel: `Patient ${id}`,
+      updatedAt,
+      documentationUpdatedAt: cloudDocument?.created_at || previousPatient?.documentationUpdatedAt || null,
+      status: documentation ? "done" : locallyActive ? "active" : "open",
+    };
+  });
+
+  const activePatientStillExists = patients.some((patient) => patient.id === previousState?.activePatientId);
+  const nextState = {
+    date: dayList.date || today(),
+    dayId: dayList.id,
+    dayListId: dayList.id,
+    dayListStatus: dayList.status,
+    patientCount,
+    backupAvailable,
+    schemaVersion: dayList.schema_version || 1,
+    userId: currentUser?.userId || dayList.user_id || null,
+    updatedAt: dayList.updated_at || now,
+    activePatientId: activePatientStillExists ? previousState.activePatientId : null,
+    patients,
+  };
+
+  if (currentPatientId && !patients.some((patient) => patient.id === currentPatientId)) {
+    currentPatientId = null;
+  }
+
+  return nextState;
 }
 
 function getCurrentPatient() {
@@ -1339,12 +1421,40 @@ function loadLastDayBackup() {
 }
 
 function updateBackupControls() {
-  const hasBackup = Boolean(loadLastDayBackup());
+  const hasBackup = currentUser ? Boolean(state.backupAvailable) : Boolean(loadLastDayBackup());
   els.restoreStartButton?.classList.toggle("hidden", !hasBackup);
   els.restoreListButton?.classList.toggle("hidden", !hasBackup);
 }
 
-function restoreLastDayBackup() {
+async function restoreLastDayBackup() {
+  if (currentUser) {
+    const confirmed = window.confirm("Letzte Tagesliste wiederherstellen?\n\nDie aktuelle Tagesliste wird dadurch ersetzt.");
+    if (!confirmed) return;
+
+    if (isRecording) stopDictation(false);
+    if (!(await ensureFreshAccessToken())) return;
+
+    try {
+      const payload = await requestDayList({
+        method: "POST",
+        body: {
+          action: "restoreBackup",
+        },
+      });
+      state = buildStateFromDayListPayload(payload, state);
+      currentPatientId = null;
+      saveState();
+      renderList();
+      showView("list");
+      replaceAppHistory("list");
+      toast("Letzte Tagesliste wiederhergestellt.");
+    } catch (error) {
+      toast(error.message || "Keine gesicherte Tagesliste vorhanden.");
+      updateBackupControls();
+    }
+    return;
+  }
+
   const backup = loadLastDayBackup();
   if (!backup) {
     toast("Keine gesicherte Tagesliste vorhanden.");
@@ -1368,6 +1478,11 @@ function createEmptyState() {
   return {
     date: today(),
     dayId: `${today()}-${currentUser?.userId || "local"}`,
+    dayListId: null,
+    dayListStatus: null,
+    patientCount: 0,
+    backupAvailable: false,
+    schemaVersion: 1,
     userId: currentUser?.userId || null,
     updatedAt: new Date().toISOString(),
     activePatientId: null,
