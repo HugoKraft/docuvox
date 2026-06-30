@@ -17,23 +17,51 @@ module.exports = async function handler(request, response) {
   }
 
   try {
+    const userId = await getAuthenticatedUserId(accessToken);
+
     if (request.method === "GET") {
       const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
+      const dayListId = normalizeOptionalId(url.searchParams.get("dayListId"));
+
+      if (dayListId) {
+        await getDayListForUser({ accessToken, userId, dayListId });
+        const documents = await listDocumentsForDayList({ accessToken, userId, dayListId });
+        return sendJson(response, 200, { documents });
+      }
+
       const date = normalizeDate(url.searchParams.get("date"));
-      const documents = await listDocuments({ accessToken, date });
+      const documents = await listDocuments({ accessToken, userId, date });
       return sendJson(response, 200, { documents });
     }
 
     const body = await readJsonBody(request);
-    const date = normalizeDate(body.date);
+    const dayListId = normalizeOptionalId(body.dayListId);
     const patientNumber = Number.parseInt(body.patientNumber, 10);
     const content = String(body.content || "").trim();
-    const userId = String(body.userId || "").trim();
 
-    if (!Number.isInteger(patientNumber) || patientNumber < 1 || !content || !userId) {
-      return sendJson(response, 400, { error: "patientNumber, content und userId sind erforderlich." });
+    if (!Number.isInteger(patientNumber) || patientNumber < 1 || !content) {
+      return sendJson(response, 400, { error: "patientNumber und content sind erforderlich." });
     }
 
+    if (dayListId) {
+      const dayList = await getDayListForUser({ accessToken, userId, dayListId });
+
+      if (dayList.status !== "active") {
+        return sendJson(response, 403, { error: "Dokumente können nur in der aktiven Tagesliste gespeichert werden." });
+      }
+
+      const document = await saveDocumentForDayList({
+        accessToken,
+        userId,
+        dayListId,
+        patientNumber,
+        content,
+      });
+
+      return sendJson(response, 200, { document });
+    }
+
+    const date = normalizeDate(body.date);
     const document = await saveDocument({
       accessToken,
       userId,
@@ -44,15 +72,54 @@ module.exports = async function handler(request, response) {
 
     return sendJson(response, 200, { document });
   } catch (error) {
-    return sendJson(response, 500, {
+    return sendJson(response, error.statusCode || 500, {
       error: error.message || "Cloud-Speicherung fehlgeschlagen.",
     });
   }
 };
 
-async function listDocuments({ accessToken, date }) {
+async function getAuthenticatedUserId(accessToken) {
+  const user = await supabaseRequest("/auth/v1/user", {
+    method: "GET",
+    accessToken,
+  });
+
+  const userId = String(user?.id || "").trim();
+  if (!userId) {
+    throw createHttpError(401, "Benutzer konnte nicht ermittelt werden.");
+  }
+
+  return userId;
+}
+
+async function getDayListForUser({ accessToken, userId, dayListId }) {
+  const dayLists = await supabaseRequest(
+    `/rest/v1/day_lists?select=id,user_id,status,date,patient_count,schema_version,created_at,updated_at&id=eq.${encodeURIComponent(dayListId)}&user_id=eq.${encodeURIComponent(userId)}&limit=1`,
+    {
+      method: "GET",
+      accessToken,
+    }
+  );
+
+  const dayList = Array.isArray(dayLists) ? dayLists[0] : null;
+  if (!dayList) {
+    throw createHttpError(404, "Tagesliste wurde nicht gefunden.");
+  }
+
+  return dayList;
+}
+
+async function listDocuments({ accessToken, userId, date }) {
   const { start, end } = getDayBounds(date);
-  const path = `/rest/v1/documents?select=id,user_id,patient_number,content,created_at&created_at=gte.${encodeURIComponent(start)}&created_at=lt.${encodeURIComponent(end)}&order=patient_number.asc,created_at.asc`;
+  const path = `/rest/v1/documents?select=id,user_id,patient_number,content,created_at&user_id=eq.${encodeURIComponent(userId)}&day_list_id=is.null&created_at=gte.${encodeURIComponent(start)}&created_at=lt.${encodeURIComponent(end)}&order=patient_number.asc,created_at.asc`;
+  return supabaseRequest(path, {
+    method: "GET",
+    accessToken,
+  });
+}
+
+async function listDocumentsForDayList({ accessToken, userId, dayListId }) {
+  const path = `/rest/v1/documents?select=id,user_id,day_list_id,patient_number,content,created_at&user_id=eq.${encodeURIComponent(userId)}&day_list_id=eq.${encodeURIComponent(dayListId)}&order=patient_number.asc,created_at.asc`;
   return supabaseRequest(path, {
     method: "GET",
     accessToken,
@@ -61,36 +128,15 @@ async function listDocuments({ accessToken, date }) {
 
 async function saveDocument({ accessToken, userId, patientNumber, content, date }) {
   const { start, end } = getDayBounds(date);
-  const deletePath = `/rest/v1/documents?user_id=eq.${encodeURIComponent(userId)}&patient_number=eq.${patientNumber}&created_at=gte.${encodeURIComponent(start)}&created_at=lt.${encodeURIComponent(end)}`;
+  const deletePath = `/rest/v1/documents?user_id=eq.${encodeURIComponent(userId)}&day_list_id=is.null&patient_number=eq.${patientNumber}&created_at=gte.${encodeURIComponent(start)}&created_at=lt.${encodeURIComponent(end)}`;
 
-  console.log("SUPABASE DELETE REQUEST", {
-    path: deletePath,
-    userId,
-    patientNumber,
-    date,
-    hasAccessToken: Boolean(accessToken),
+  await supabaseRequest(deletePath, {
+    method: "DELETE",
+    accessToken,
+    prefer: "return=minimal",
   });
-
-  try {
-    await supabaseRequest(deletePath, {
-      method: "DELETE",
-      accessToken,
-      prefer: "return=minimal",
-    });
-  } catch (error) {
-    console.error("Supabase documents DELETE failed:", error.message || error);
-    throw error;
-  }
 
   const insertPath = "/rest/v1/documents?select=id,user_id,patient_number,content,created_at";
-
-  console.log("SUPABASE INSERT REQUEST", {
-    path: insertPath,
-    userId,
-    patientNumber,
-    contentLength: content.length,
-    hasAccessToken: Boolean(accessToken),
-  });
 
   const inserted = await supabaseRequest(insertPath, {
     method: "POST",
@@ -98,6 +144,32 @@ async function saveDocument({ accessToken, userId, patientNumber, content, date 
     prefer: "return=representation",
     body: {
       user_id: userId,
+      patient_number: patientNumber,
+      content,
+    },
+  });
+
+  return Array.isArray(inserted) ? inserted[0] : inserted;
+}
+
+async function saveDocumentForDayList({ accessToken, userId, dayListId, patientNumber, content }) {
+  const deletePath = `/rest/v1/documents?user_id=eq.${encodeURIComponent(userId)}&day_list_id=eq.${encodeURIComponent(dayListId)}&patient_number=eq.${patientNumber}`;
+
+  await supabaseRequest(deletePath, {
+    method: "DELETE",
+    accessToken,
+    prefer: "return=minimal",
+  });
+
+  const insertPath = "/rest/v1/documents?select=id,user_id,day_list_id,patient_number,content,created_at";
+
+  const inserted = await supabaseRequest(insertPath, {
+    method: "POST",
+    accessToken,
+    prefer: "return=representation",
+    body: {
+      user_id: userId,
+      day_list_id: dayListId,
       patient_number: patientNumber,
       content,
     },
@@ -119,29 +191,11 @@ async function supabaseRequest(path, options) {
     headers.Prefer = options.prefer;
   }
 
-  if (["DELETE", "POST"].includes(options.method)) {
-    console.log("SUPABASE REQUEST", {
-      method: options.method,
-      path,
-      hasAuthorizationHeader: Boolean(headers.Authorization),
-      hasAnonKey: Boolean(anonKey),
-      bodyKeys: options.body ? Object.keys(options.body) : [],
-    });
-  }
-
   const response = await fetch(`${baseUrl}${path}`, {
     method: options.method,
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
-
-  if (["DELETE", "POST"].includes(options.method)) {
-    console.log("SUPABASE RESPONSE", {
-      method: options.method,
-      status: response.status,
-      path,
-    });
-  }
 
   if (response.status === 204) return null;
 
@@ -153,7 +207,12 @@ async function supabaseRequest(path, options) {
       payload,
       path,
     });
-    throw new Error(payload.message || payload.error_description || "Supabase documents request failed");
+
+    const error = createHttpError(
+      response.status === 401 ? 401 : 500,
+      payload.message || payload.error_description || "Supabase documents request failed"
+    );
+    throw error;
   }
 
   return payload;
@@ -180,6 +239,10 @@ function normalizeDate(value) {
   const candidate = String(value || "").trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(candidate)) return candidate;
   return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeOptionalId(value) {
+  return String(value || "").trim();
 }
 
 function resolveSupabaseUrl() {
@@ -231,6 +294,12 @@ async function readJsonBody(request) {
     });
     request.on("error", reject);
   });
+}
+
+function createHttpError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
 }
 
 function sendJson(response, statusCode, body) {
