@@ -1,4 +1,4 @@
-const CACHE_NAME = "docuvox-v4-auth-copy";
+const CACHE_NAME = "docuvox-v5-day-lists";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -12,14 +12,12 @@ const APP_SHELL = [
   "/icons/icon-192.png",
   "/icons/icon-512.png"
 ];
-
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
   );
   self.skipWaiting();
 });
-
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
@@ -28,19 +26,36 @@ self.addEventListener("activate", (event) => {
   );
   self.clients.claim();
 });
-
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
-
+  const url = new URL(event.request.url);
+  if (url.pathname.startsWith("/api/")) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match("/index.html"))
+    );
+    return;
+  }
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        if (response && response.status === 200) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
         return response;
       })
-      .catch(() =>
-        caches.match(event.request).then((cached) => cached || caches.match("/index.html"))
-      )
+      .catch(() => caches.match(event.request))
   );
 });
