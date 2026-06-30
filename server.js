@@ -7,6 +7,7 @@ loadEnvFile();
 const documentHandler = require("./api/document");
 const authHandler = require("./api/auth");
 const documentsHandler = require("./api/documents");
+const dayListsHandler = require("./api/day-lists");
 
 const root = process.cwd();
 const port = Number(process.env.PORT || 5173);
@@ -37,6 +38,11 @@ const server = http.createServer(async (request, response) => {
 
   if (url.pathname === "/api/documents") {
     await documentsHandler(request, response);
+    return;
+  }
+
+  if (url.pathname === "/api/day-lists") {
+    await dayListsHandler(request, response);
     return;
   }
 
