@@ -152,9 +152,8 @@ async function bootApp() {
   }
 
   state = loadState();
-  await refreshCloudDocuments();
   updateUserUi();
-  renderInitialView();
+  await renderCachedOrLoadCloud();
 }
 
 function showLogin() {
@@ -213,16 +212,28 @@ async function authenticate(action) {
 
     localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
     state = loadState();
-    await refreshCloudDocuments();
     updateUserUi();
     els.loginPassword.value = "";
     showLoginMessage("");
-    renderInitialView();
+    await renderCachedOrLoadCloud();
   } catch (error) {
     showLoginMessage(error.message || "Login fehlgeschlagen.", true);
   } finally {
     setAuthBusy(false);
   }
+}
+
+async function renderCachedOrLoadCloud() {
+  if (state.patients.length) {
+    renderList();
+    showView("list");
+    replaceAppHistory("list");
+    refreshCloudDocumentsInBackground();
+    return;
+  }
+
+  await refreshCloudDocuments();
+  renderInitialView();
 }
 
 function logout() {
@@ -1200,6 +1211,45 @@ async function refreshCloudDocuments() {
   }
 }
 
+async function refreshCloudDocumentsInBackground() {
+  const previousSignature = getDayListRenderSignature();
+
+  await refreshCloudDocuments();
+
+  const changed = previousSignature !== getDayListRenderSignature();
+
+  if (!changed || isRecording) return;
+
+  if (els.listView && !els.listView.classList.contains("hidden")) {
+    if (state.patients.length) {
+      renderList();
+      showView("list");
+    }
+    return;
+  }
+
+  if (els.startView && !els.startView.classList.contains("hidden") && state.patients.length) {
+    renderList();
+    showView("list");
+    replaceAppHistory("list");
+  }
+}
+
+function getDayListRenderSignature() {
+  return JSON.stringify({
+    dayListId: state.dayListId || null,
+    date: state.date || null,
+    patientCount: state.patients.length,
+    backupAvailable: Boolean(state.backupAvailable),
+    patients: state.patients.map((patient) => ({
+      id: patient.id,
+      status: patient.status,
+      hasDocumentation: Boolean(patient.documentation),
+      documentation: patient.documentation || "",
+    })),
+  });
+}
+
 async function saveDocumentToCloud(patient) {
   if (!currentUser?.accessToken || !patient?.documentation) return;
   if (!(await ensureFreshAccessToken())) return;
@@ -1253,6 +1303,13 @@ function buildStateFromDayListPayload(payload, previousState = createEmptyState(
   const backupAvailable = Boolean(payload?.backupAvailable);
 
   if (!dayList) {
+    if (previousState?.patients?.length) {
+      return {
+        ...previousState,
+        backupAvailable,
+      };
+    }
+
     currentPatientId = null;
     return {
       ...createEmptyState(),
