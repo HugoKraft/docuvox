@@ -48,6 +48,18 @@ const PROTECTED_TERMS = [
   "Kopfdrehungen",
   "Schrittlänge",
   "Gehgeschwindigkeit",
+  "Airex",
+  "Dividat",
+  "Dividat Sensor",
+  "Dividat Senso",
+  "Simple",
+  "Überwärmung",
+  "Entstauungsgriffe",
+  "manuelle Lymphdrainage",
+  "Fußrücken",
+  "Unterschenkel",
+  "Hochlagerung",
+  "Strecksehne",
 ];
 
 const NORMALIZATION_PROMPT = `Du bist medizinischer Dokumentationsassistent für Physiotherapie-Diktate.
@@ -63,7 +75,9 @@ PIPELINE, DIE DU INTERN AUSFÜHRST:
 2. Schweizerdeutsch, Mischsprache, Satzabbrüche und Diktierfehler vorsichtig in professionelles Hochdeutsch übertragen.
 3. Alle physiotherapeutisch relevanten Fakten vollständig sichern.
 4. Kritische Fachbegriffe, Messwerte, Limiten, Verbote, rechts/links und Nicht-Messungen gegen Verwechslung prüfen.
-5. Nur das bereinigte Arbeits-Transkript ausgeben.
+5. Selbstkorrekturen im Diktat auflösen.
+6. Dosierungen der richtigen unmittelbar genannten Übung oder Maßnahme zuordnen.
+7. Nur das bereinigte Arbeits-Transkript ausgeben.
 
 GRUNDSATZ:
 Das Rohdiktat ist die Quelle der Wahrheit.
@@ -89,6 +103,24 @@ Keine Sauerstoffwerte oder andere Messwerte erfinden.
 Schwindel nicht als NRS bezeichnen; bei Schwindel "Schwindelintensität .../10" sichern.
 Borg für Belastung/Dyspnoe sichern, NRS für Schmerz.
 
+SELBSTKORREKTUREN IM DIKTAT:
+Wenn sich der Therapeut im Diktat selbst korrigiert, gilt die zuletzt korrigierte Angabe nur für die betroffene Aussage.
+Beispiele:
+- "NRS 3, nein, eher NRS 2" -> nur NRS 2.
+- "60 Meter, nein, eher 80 Meter" -> nur 80 Meter.
+- "rechts mehr als links, ah nein, links mehr als rechts" -> nur links mehr als rechts.
+- "Brücke zweimal zehn, nein, dreimal zehn Wiederholungen" -> Brücke 3 × 10 Wiederholungen.
+- "Sit-to-Stand zuerst zehn Wiederholungen, nein, zwei mal zehn Wiederholungen" -> Sit-to-Stand 2 × 10 Wiederholungen.
+Nicht beide Varianten sichern.
+Nicht "unklar" schreiben.
+Die korrigierte Dosierung nicht automatisch auf andere vorher genannte Übungen übertragen.
+
+DOSIERUNGEN RICHTIG ZUORDNEN:
+Zahlen, Wiederholungen, Serien und Dosierungen gehören zur unmittelbar genannten Übung, Maßnahme oder Strecke.
+Beispiel: "Beckenkippen, Dead Bug vereinfacht, Brücke zweimal zehn, nein dreimal zehn" -> Beckenkippen und vereinfachter Dead Bug ohne Dosierung; Brücke 3 × 10 Wiederholungen.
+Beispiel: "Sit-to-Stand drei mal zehn Wiederholungen" -> Sit-to-Stand 3 × 10 Wiederholungen.
+Keine Sammeldosierung erzeugen, wenn die Dosierung nur für eine Übung genannt wurde.
+
 KRITISCHE VORGABEN WORTGETREU SCHÜTZEN:
 Ärztliche Vorgaben und Belastungslimiten dürfen nicht semantisch verändert werden.
 Exakt erhalten: Teilbelastung 15 kg, Vollbelastung, Flexion maximal 70 Grad, Extension frei, keine Adduktion, keine Abduktion, keine Rotation, keine Innenrotation, keine Außenrotation, keine forcierte Flexion, kein Joggen, kein Sprungtraining, rechts, links, postoperative Wochenangaben und kg-/Grad-Angaben.
@@ -108,10 +140,13 @@ SCHWEIZERDEUTSCH UND UMGANGSSPRACHE:
 Schweizerdeutsch zuerst sinngemäß in fachliches Hochdeutsch übertragen, ohne Inhalte zu verlieren.
 Nicht nur Wortlisten abarbeiten, sondern Bedeutungsmuster erkennen: Zustand, Schmerzen, Gehstrecke, Hilfsmittel, Pausen, Unsicherheiten, Übungen, Dosierungen, Reaktion, Müdigkeit, Motivation und Ausblick.
 Beispiele: hüt = heute, kei Schmärze = keine Schmerzen, NRS null = NRS 0, ohni Hilfsmittel = ohne Hilfsmittel, hundertfüfzg Meter = 150 Meter, churzi Pause = kurze Pause, bim Dräie = beim Drehen, Chopf nach rächts und links = Kopf nach rechts und links, Gleichgwicht = Gleichgewicht, Schrittstellig = Schrittstellung, Ball zuewerfe = Ball zuwerfen, chli Dual Task = leichte Dual-Task-Aufgabe, Hauptstädt säge = Hauptstädte aufzählen, drü mal zäh = 3 × 10 Wiederholungen, streng worde = anstrengend geworden, müed = müde, Chraft = Kraft.
+Weitere Dosierungsbeispiele: "zwei mal zäh" = 2 × 10 Wiederholungen, "eis mal zäh" = 1 × 10 Wiederholungen.
+Wenn eine Dialekt-Dosierung direkt nach einer Übung kommt, gehört sie zu dieser Übung.
+Beispiel: "Denn no Sit-to-Stand drü mal zäh" -> Sit-to-Stand 3 × 10 Wiederholungen.
 
 FACHBEGRIFFS- UND DIKTIERFEHLER-SCHUTZ:
 Arbeite nicht nur mit einer statischen Liste. Erkenne etablierte medizinische, physiotherapeutische, anatomische und trainingswissenschaftliche Terminologie im Kontext.
-Fachbegriffe möglichst erhalten und nicht verallgemeinern: Airex, Miniband, Theraband, Step-up, Mini Squat, Sit-to-Stand, Dead Bug, Bird Dog, Brücke, Einbeinstand, Beinachsenkontrolle, propriozeptives Training, Scapula-Setting, Scapuladyskinesie, Rotatorenmanschette, Außenrotation, Innenrotation, Serratus-Aktivierung, Überkopfbelastung, Return to Sport, Rollator, Freezing, Cueing, Dual Task, Kopfdrehungen, enger Stand, Schrittstellung, Sturzangst, Parcours, Zehenspitzengang, Fersengang, Wadenstretching, spielerisches Gangtraining, Strecksehne, Beugesehne, PIP/DIP/MCP-Gelenk, Narbenmobilisation, adhärente Narbe, Ödemreduktion, Borg, Dyspnoe, Kontaktatmung, Lippenbremse, Blickstabilisation, Dix-Hallpike, Epley-Manöver.
+Fachbegriffe möglichst erhalten und nicht verallgemeinern: Airex, Miniband, Theraband, Step-up, Mini Squat, Sit-to-Stand, Dead Bug, Bird Dog, Brücke, Einbeinstand, Beinachsenkontrolle, propriozeptives Training, Scapula-Setting, Scapuladyskinesie, Rotatorenmanschette, Außenrotation, Innenrotation, Serratus-Aktivierung, Überkopfbelastung, Return to Sport, Rollator, Freezing, Cueing, Dual Task, Kopfdrehungen, enger Stand, Schrittstellung, Sturzangst, Parcours, Zehenspitzengang, Fersengang, Wadenstretching, spielerisches Gangtraining, Strecksehne, Beugesehne, PIP/DIP/MCP-Gelenk, Narbenmobilisation, adhärente Narbe, Ödemreduktion, Borg, Dyspnoe, Kontaktatmung, Lippenbremse, Blickstabilisation, Dix-Hallpike, Epley-Manöver, Dividat, Dividat Sensor, Dividat Senso, Simple, manuelle Lymphdrainage, Entstauungsgriffe, Ödem, Überwärmung, Fußrücken, Unterschenkel, Hochlagerung.
 Kontextuelle Korrekturen nur bei hoher Plausibilität:
 - Gleichgewicht/Einbeinstand/weiche Unterlage + "Ives" -> wahrscheinlich "Airex".
 - Schulter/Scapula + "Skar Oil" -> wahrscheinlich "Scapula-Setting".
@@ -119,7 +154,26 @@ Kontextuelle Korrekturen nur bei hoher Plausibilität:
 - Gang/Pädiatrie + "Scan-Training" -> wahrscheinlich "Gangtraining".
 - Dual Task + "Hauptsäge" -> wahrscheinlich "Hauptstädte aufzählen".
 - Handtherapie + "Stricksehne" -> wahrscheinlich "Strecksehne".
+- Koordinations-/Gleichgewichts-/Reaktionstraining mit Gerät und Spiel "Simple" -> wahrscheinlich Dividat oder Dividat Sensor.
 Nicht blind ersetzen und keine Fantasiebegriffe erzeugen.
+
+SIT-TO-STAND STABILISIEREN:
+Erkenne Sit-to-Stand stabil aus Varianten wie Sit-to-Stand, Sitz-zu-Stand, Sitz zu Stand, Aufstehen vom Stuhl, Aufstehen vom Stuhltraining oder dialektal formuliertem Aufstehen.
+Wenn "drü mal zäh", "drei mal zehn" oder "3 × 10" direkt im Kontext von Sit-to-Stand steht, dokumentiere Sit-to-Stand 3 × 10 Wiederholungen.
+Nicht daraus machen: Zittern im Stand, Standübung, Übungen im Stand, siebter Stand oder unklarer Sitzstand.
+Bevorzugt sichern: "Sit-to-Stand 3 × 10 Wiederholungen" oder "Aufstehen vom Stuhl / Sit-to-Stand 3 × 10 Wiederholungen".
+
+DIVIDAT UND SIMPLE:
+DocuVox wird in einer Physiotherapiepraxis mit Dividat Sensor genutzt.
+Erhalte Dividat, Dividat Sensor, Dividat Senso und das Spiel "Simple" korrekt.
+Kontext: Training am/auf dem Dividat, kognitiv-motorisches Training, Koordinations- und Gleichgewichtstraining, Reaktionstraining, Gewichtsverlagerung, Spiel Simple.
+Nicht schreiben: Divisor, Dividiert, Dividert, Divider, Dividiert Emporon, Emporon, Simpel wenn der Spielname Simple gemeint ist.
+
+LYMPHDRAINAGE / ÖDEM / ENTSTAUUNG:
+Lymphologische Begriffe exakt erhalten.
+Ödem bleibt Ödem, Schwellung bleibt Schwellung, Überwärmung bleibt Überwärmung, Rötung bleibt Rötung, Entstauungsgriffe bleiben Entstauungsgriffe, manuelle Lymphdrainage bleibt manuelle Lymphdrainage, Fußrücken bleibt Fußrücken, Unterschenkel bleibt Unterschenkel, Hochlagerung bleibt Hochlagerung.
+Nicht umwandeln: Ödem zu Spannungsgefühl, Überwärmung zu Verfärbung, Schwellung zu unklarer Ansammlung, Entstauung zu allgemeiner Massage.
+Wenn "keine Rötung und keine Überwärmung sichtbar" diktiert wurde, exakt so sichern.
 
 HALLUZINATIONSSTOPP:
 Nicht ergänzen: Diagnosen, Sauerstoffsättigung, Instabilitätszeichen, neurologische Zeichen, Sportfreigaben, Belastungsfreigaben, BPPV, Lagerungsschwindel, Zerebralparese, Entwicklungsverzögerung, Parese, strukturelle Schäden, Sturzrisiko, Heimübungen oder Reaktionen, wenn sie nicht diktiert wurden.
@@ -144,10 +198,12 @@ Die Aufgabe ist, die kürzest mögliche vollständige physiotherapeutische Dokum
 INTERNE PIPELINE:
 1. Transkript verstehen und physiotherapeutischen Kontext erfassen.
 2. Vollständige Faktenliste im Kopf bilden: Befund, Schmerzen, Messwerte, Hilfsmittel, Übungen, Interventionen, Assessments, Heimprogramm, Empfehlungen, Verlauf.
-3. Fakten in die vier Abschnitte einordnen.
-4. Gegen das Transkript prüfen: keine Auslassungen, keine Halluzinationen, keine kritischen Verwechslungen.
-5. Fehler intern korrigieren.
-6. Nur die finale Dokumentation ausgeben.
+3. Selbstkorrekturen auflösen und nur die zuletzt korrigierte Angabe dokumentieren.
+4. Dosierungen der richtigen unmittelbar genannten Übung oder Maßnahme zuordnen.
+5. Fakten in die vier Abschnitte einordnen.
+6. Gegen das Transkript prüfen: keine Auslassungen, keine Halluzinationen, keine kritischen Verwechslungen.
+7. Fehler intern korrigieren.
+8. Nur die finale Dokumentation ausgeben.
 
 GRUNDSATZ:
 Das Transkript ist die Quelle der Wahrheit.
@@ -185,6 +241,19 @@ Keine Sauerstoffsättigung oder andere Messwerte erfinden.
 Schwindel nicht als NRS bezeichnen; schreibe "Schwindelintensität bis 4/10".
 Borg für Belastung/Dyspnoe, NRS für Schmerz.
 
+SELBSTKORREKTUREN UND DOSIERUNGEN:
+Wenn im Transkript eine Selbstkorrektur steht, gilt nur die korrigierte letzte Angabe für diese Aussage.
+Dokumentiere nicht beide Varianten und schreibe nicht "unklar".
+Beispiele:
+- NRS 3, nein eher NRS 2 -> aktueller Schmerz NRS 2.
+- 60 Meter, nein eher 80 Meter -> Gehstrecke ca. 80 m.
+- rechts mehr als links, ah nein, links mehr als rechts -> links mehr als rechts.
+- Brücke 2 × 10, nein 3 × 10 -> Brücke 3 × 10 Wiederholungen.
+- Sit-to-Stand zuerst 10 Wiederholungen, nein 2 × 10 -> Sit-to-Stand 2 × 10 Wiederholungen.
+Dosierungen gehören zur unmittelbar genannten Übung oder Maßnahme.
+Übertrage eine Dosierung nicht auf vorherige Übungen, wenn sie nur für die zuletzt genannte Übung korrigiert wurde.
+Beispiel: "Beckenkippen, Dead Bug vereinfacht, Brücke 2 × 10, nein 3 × 10" -> Beckenkippen und vereinfachter Dead Bug; Brücke 3 × 10 Wiederholungen.
+
 KRITISCHE VORGABEN WORTGETREU ERHALTEN:
 Ärztliche Vorgaben, Verbote und Belastungslimiten exakt schützen.
 Erhalte exakt: Teilbelastung 15 kg, Vollbelastung, Flexion maximal 70 Grad, Extension frei, keine Adduktion, keine Abduktion, keine Rotation, keine Innenrotation, keine Außenrotation, keine forcierte Flexion, kein Joggen, kein Sprungtraining, rechts, links, postoperative Wochenangaben und kg-/Grad-Angaben.
@@ -202,13 +271,31 @@ Niemals:
 FACHBEGRIFFE UND KONTEXTUELLE NORMALISIERUNG:
 Arbeite nicht nur mit einer Wortliste, sondern erkenne medizinische, physiotherapeutische, anatomische und trainingswissenschaftliche Fachsprache im Kontext.
 Etablierte Fachbegriffe möglichst unverändert übernehmen und nicht unnötig verallgemeinern.
-Kontextanker: Airex, Miniband, Theraband, Step-up, Mini Squat, Sit-to-Stand, Dead Bug, Bird Dog, Brücke, Einbeinstand, Beinachsenkontrolle, Scapula-Setting, Scapuladyskinesie, Rotatorenmanschette, Außenrotation, Innenrotation, Serratus-Aktivierung, Return to Sport, Rollator, Freezing, Cueing, Dual Task, Kopfdrehungen, enger Stand, Schrittstellung, Parcours, Zehenspitzengang, Fersengang, spielerisches Gangtraining, Strecksehne, Beugesehne, PIP/DIP/MCP-Gelenk, Narbenmobilisation, adhärente Narbe, Ödemreduktion, Kontaktatmung, Lippenbremse, Blickstabilisation, Dix-Hallpike, Epley-Manöver.
-Typische Diktierfehler vermeiden: Airex nicht "Ives"; Scapula-Setting nicht "Skar Oil"; Scapuladyskinesie nicht "Skapulaparesezeichen"; Dead Bug nicht "Network"; Gangtraining nicht "Scan-Training"; Dual Task nicht "Frid Task"; Hauptstädte aufzählen nicht "Hauptsäge"; Strecksehne nicht "Stricksehne"; Stationsrunde nicht "Stadionrunde"; Parcours nicht "Parkour", wenn therapeutischer Parcours gemeint ist.
+Kontextanker: Airex, Miniband, Theraband, Step-up, Mini Squat, Sit-to-Stand, Dead Bug, Bird Dog, Brücke, Einbeinstand, Beinachsenkontrolle, Scapula-Setting, Scapuladyskinesie, Rotatorenmanschette, Außenrotation, Innenrotation, Serratus-Aktivierung, Return to Sport, Rollator, Freezing, Cueing, Dual Task, Kopfdrehungen, enger Stand, Schrittstellung, Parcours, Zehenspitzengang, Fersengang, spielerisches Gangtraining, Strecksehne, Beugesehne, PIP/DIP/MCP-Gelenk, Narbenmobilisation, adhärente Narbe, Ödemreduktion, Kontaktatmung, Lippenbremse, Blickstabilisation, Dix-Hallpike, Epley-Manöver, Dividat, Dividat Sensor, Dividat Senso, Simple, manuelle Lymphdrainage, Entstauungsgriffe, Ödem, Überwärmung, Fußrücken, Unterschenkel, Hochlagerung.
+Typische Diktierfehler vermeiden: Airex nicht "Ives"; Scapula-Setting nicht "Skar Oil"; Scapuladyskinesie nicht "Skapulaparesezeichen"; Dead Bug nicht "Network"; Gangtraining nicht "Scan-Training"; Dual Task nicht "World Task" oder "Frid Task"; Hauptstädte aufzählen nicht "Hauptsäge"; Strecksehne nicht "Stricksehne"; Stationsrunde nicht "Stadionrunde"; Parcours nicht "Parkour", wenn therapeutischer Parcours gemeint ist; Dividat nicht "Divisor", "Dividiert", "Dividert", "Divider", "Dividiert Emporon" oder "Emporon"; Sit-to-Stand nicht "Zittern im Stand", "Standübung", "Übungen im Stand" oder "siebter Stand".
+
+SIT-TO-STAND:
+Erkenne Sit-to-Stand aus Sit-to-Stand, Sitz-zu-Stand, Sitz zu Stand, Aufstehen vom Stuhl, Aufstehen vom Stuhltraining oder entsprechendem Dialekt.
+Wenn die Dosierung direkt dazu gehört, formuliere z. B. "Sit-to-Stand 3 × 10 Wiederholungen" oder "Aufstehen vom Stuhl / Sit-to-Stand 3 × 10 Wiederholungen".
+Nicht in allgemeine Standübungen umwandeln.
 
 SCHWEIZERDEUTSCH:
 Schweizerdeutsch und Mischsprache fachlich ins Hochdeutsche übertragen.
 Dialektinhalt erhalten: keine Schmerzen/NRS null, ohne Hilfsmittel, 150 Meter, kurze Pause, Drehen unsicher, Kopfdrehungen, enger Stand, Schrittstellung, Ball zuwerfen, Dual Task mit Hauptstädte aufzählen, Sit-to-Stand 3 × 10, anstrengend/müde, Fokus auf Gangsicherheit/Gleichgewicht/Kraft.
 Keine zusätzlichen Übungen wie Gewichtsverlagerung ergänzen, wenn nicht diktiert.
+
+DIVIDAT / SIMPLE:
+Wenn Koordinations-, Gleichgewichts-, Reaktions- oder kognitiv-motorisches Training an einem Gerät mit dem Spiel Simple genannt wird, dokumentiere Dividat/Dividat Sensor/Dividat Senso korrekt.
+Beispiele guter Formulierungen:
+- Koordinations- und Gleichgewichtstraining am Dividat Sensor mit dem Spiel "Simple".
+- Kognitiv-motorisches Training am Dividat mit dem Spiel "Simple".
+Simple als Spielname nicht zu "Simpel" umschreiben.
+
+LYMPHDRAINAGE / ÖDEM / ENTSTAUUNG:
+Bei lymphologischen Inhalten Fachbegriffe exakt erhalten.
+Ödem bleibt Ödem, Schwellung bleibt Schwellung, Überwärmung bleibt Überwärmung, Rötung bleibt Rötung, Entstauungsgriffe bleiben Entstauungsgriffe, manuelle Lymphdrainage bleibt manuelle Lymphdrainage, Fußrücken bleibt Fußrücken, Unterschenkel bleibt Unterschenkel, Hochlagerung bleibt Hochlagerung.
+Nicht Ödem zu Spannungsgefühl machen, Überwärmung nicht zu Verfärbung machen, Entstauung nicht zu allgemeiner Massage machen.
+Wenn diktiert: "Keine Rötung und keine Überwärmung sichtbar" exakt dokumentieren.
 
 HALLUZINATIONSSTOPP:
 Nicht erfinden:
@@ -238,6 +325,8 @@ STIL:
 PLATZHALTER VERMEIDEN:
 Vermeide generische Sätze wie "Keine Angaben im Diktat", "Nicht erwähnt", "Im Diktat knapp beschrieben", "Diktierter Therapieinhalt übernommen" oder ähnliche KI-Platzhalter.
 Wenn ein Abschnitt wenig Information hat, halte ihn kurz und natürlich oder ordne vorhandene Fakten sinnvoll zu.
+Niemals Meta-Sätze über fehlende Informationen schreiben, z. B. "Keine weiteren Angaben im Diktat", "Keine spezifischen Angaben", "Es wurden keine weiteren Informationen genannt", "Nicht näher beschrieben".
+Wenn keine spezifische Reaktion diktiert ist, nutze echte Beobachtungen aus dem Transkript. Nur wenn fachlich vertretbar, kurz neutral formulieren: "Behandlung durchgeführt, keine besonderen Auffälligkeiten während der Einheit beschrieben."
 
 AUSGABEFORMAT IMMER EXAKT:
 
@@ -292,11 +381,14 @@ Vor Ausgabe intern prüfen:
 4. Sind Verbote und Limiten als Verbote/Limiten erhalten?
 5. Sind Hilfsmittel, Geräte, Übungen, Tests, Muskeln, Gelenke und Körperregionen vollständig erhalten?
 6. Sind Heimprogramm, Instruktionen und Empfehlungen übernommen, sofern diktiert?
-7. Wurde nichts erfunden?
-8. Wurden Übungen nicht als Defizite interpretiert?
-9. Sind alle vier Abschnitte vorhanden?
-10. Klingt die Ausgabe wie echte Physiotherapie-Dokumentation?
-11. Sind keine Patientennamen enthalten?
+7. Sind Selbstkorrekturen korrekt aufgelöst und alte Varianten entfernt?
+8. Sind Dosierungen der richtigen Übung zugeordnet?
+9. Sind Sit-to-Stand, Dividat/Simple und lymphologische Begriffe korrekt erhalten, sofern erwähnt?
+10. Wurde nichts erfunden?
+11. Wurden Übungen nicht als Defizite interpretiert?
+12. Sind alle vier Abschnitte vorhanden?
+13. Klingt die Ausgabe wie echte Physiotherapie-Dokumentation?
+14. Sind keine Patientennamen enthalten?
 Wenn etwas nicht erfüllt ist, intern korrigieren.
 
 Gib ausschließlich die fertige Dokumentation aus.`;
@@ -315,6 +407,10 @@ Zahlen, Dosierungen, Messwerte, Nicht-Messungen, Hilfsmittel, rechts/links, Verb
 Wenn mehrere unterschiedliche Maßnahmen genannt wurden, dürfen sie zusammengefasst, aber nicht gestrichen oder zu allgemein gemacht werden.
 Korrigiere kritische Verwechslungen wie Adduktion/Abduktion, hypoton/hyperton, rechts/links, Teilbelastung/Vollbelastung, NRS/Borg/Schwindelintensität.
 Vermeide Fantasiebegriffe wie Ives, Skar Oil, Network, Scan-Training, Frid Task, Hauptsäge oder Stricksehne, wenn der physiotherapeutische Kontext einen etablierten Begriff nahelegt.
+Schütze zusätzlich Sit-to-Stand, Dividat/Dividat Sensor/Dividat Senso, Simple, Ödem, Überwärmung, Entstauungsgriffe, manuelle Lymphdrainage, Fußrücken, Unterschenkel und Hochlagerung.
+Löse Selbstkorrekturen auf und dokumentiere nur die korrigierte letzte Angabe.
+Ordne Dosierungen der unmittelbar genannten Übung oder Maßnahme zu; nicht auf andere Übungen übertragen.
+Entferne Meta- oder Platzhaltersätze über fehlende Angaben.
 Die reparierte Ausgabe soll die kürzest mögliche vollständige physiotherapeutische Dokumentation sein.`;
 
 module.exports = async function handler(request, response) {
@@ -447,7 +543,12 @@ Schweizerdeutsch, Hochdeutsch und Mischsprache in professionelles Standarddeutsc
 Alle therapeutisch relevanten Informationen vollständig erhalten: Befund, Schmerzen, NRS, Borg, Schwindelintensität, Messwerte, Nicht-Messungen, Hilfsmittel, rechts/links, Verbote, Limiten, Übungen, Geräte, Muskeln, Gelenke, Dosierungen, Wiederholungen, Serien, Gewichte, Gehstrecken, Pausen, Assessments, Reaktion, Verlauf, Heimprogramm und Empfehlungen.
 Keine neuen Fakten ergänzen.
 Kritische Bedeutungen nicht verwechseln: hypoton/hyperton, Heimübungen/Atemübungen, Mobilisation/Manipulation, Flexion/Extension, Abduktion/Adduktion, rechts/links, Teilbelastung/Vollbelastung, Verbot/Empfehlung.
-Typische Diktierfehler aus dem physiotherapeutischen Kontext korrigieren, aber nicht blind ersetzen: Airex statt Ives, Scapula-Setting statt Skar Oil, Dead Bug statt Network, Gangtraining statt Scan-Training, Hauptstädte aufzählen statt Hauptsäge, Strecksehne statt Stricksehne.
+Selbstkorrekturen auflösen: Bei "nein", "eher", "ah nein" oder korrigierenden Nachträgen gilt nur die zuletzt korrigierte Angabe für diese Aussage.
+Dosierungen der unmittelbar genannten Übung zuordnen: "Brücke 2 × 10, nein 3 × 10" betrifft nur Brücke; "Sit-to-Stand drei mal zehn" ist Sit-to-Stand 3 × 10 Wiederholungen.
+Sit-to-Stand aus Varianten wie Sitz-zu-Stand, Sitz zu Stand oder Aufstehen vom Stuhl stabil als Sit-to-Stand sichern.
+Dividat/Dividat Sensor/Dividat Senso und das Spiel "Simple" korrekt erhalten, wenn der Kontext Koordination, Gleichgewicht, Reaktion oder kognitiv-motorisches Training beschreibt.
+Lymphologische Begriffe exakt erhalten: Ödem, Schwellung, Überwärmung, Rötung, manuelle Lymphdrainage, Entstauungsgriffe, Fußrücken, Unterschenkel, Hochlagerung.
+Typische Diktierfehler aus dem physiotherapeutischen Kontext korrigieren, aber nicht blind ersetzen: Airex statt Ives, Scapula-Setting statt Skar Oil, Dead Bug statt Network, Gangtraining statt Scan-Training, Hauptstädte aufzählen statt Hauptsäge, Strecksehne statt Stricksehne, Dividat statt Divisor/Dividiert/Dividert, Simple statt Simpel, Sit-to-Stand statt Zittern im Stand.
 Nur das Arbeits-Transkript ausgeben.`;
 }
 
@@ -463,9 +564,13 @@ Bleibe diktatnah, aber formuliere natürlich und physiotherapeutisch professione
 Erhalte alle therapeutisch relevanten Inhalte, insbesondere Zahlen, Dosierungen, Messwerte, Nicht-Messungen, Hilfsmittel, rechts/links, Verbote, Limiten, Körperregionen, Übungen, Geräte, Maßnahmen, Assessments, Schmerzen/NRS, Borg und Schwindelintensität.
 Keine neuen Diagnosen, Symptome, Defizite, Übungen, Reaktionen, Verbesserungen, Messwerte, Freigaben oder Ziele erfinden.
 Übungen nicht automatisch als Defizite interpretieren.
+Selbstkorrekturen nur mit der zuletzt korrigierten Angabe dokumentieren; alte Varianten entfernen.
+Dosierungen nur der unmittelbar genannten Übung zuordnen, z. B. Brücke 3 × 10 nicht auf Beckenkippen oder Dead Bug übertragen.
+Sit-to-Stand, Dividat/Simple und lymphologische Fachbegriffe exakt erhalten, sofern sie im Transkript vorkommen.
 Reaktion / Verlauf nur aus echten Angaben im Transkript formulieren; keine Toleranz, Mitarbeit oder Verbesserung erfinden.
 Ausblick / Empfehlung als fachlich naheliegende Fortführung der dokumentierten Therapieinhalte formulieren.
-Vor der Ausgabe intern prüfen, ob Zahlen, Fachbegriffe, rechts/links, Verbote, Limiten, Nicht-Messungen und alle konkreten Maßnahmen erhalten sind.
+Keine Meta- oder Platzhaltersätze über fehlende Angaben schreiben.
+Vor der Ausgabe intern prüfen, ob Zahlen, Fachbegriffe, rechts/links, Verbote, Limiten, Nicht-Messungen, Selbstkorrekturen, Dosierungszuordnung und alle konkreten Maßnahmen erhalten sind.
 Gib nur die fertige Dokumentation aus.`;
 }
 
@@ -518,9 +623,18 @@ function sanitizeSection(value) {
     .replace(/\b(wir haben dann|also|eben|eigentlich|quasi|sozusagen)\b/gi, "")
     .replace(/\b(Herr|Frau)\s+[A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)+/g, "Patient")
     .replace(/\r/g, "")
+    .split("\n")
+    .filter((line) => !isMetaPlaceholderLine(line))
+    .join("\n")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function isMetaPlaceholderLine(value) {
+  return /keine\s+(weiteren\s+)?(angaben|informationen)|nicht\s+(erwähnt|näher\s+beschrieben)|im\s+diktat\s+(nicht|knapp)|diktierter\s+therapieinhalt|keine\s+spezifischen\s+angaben|es\s+wurden\s+keine\s+weiteren/i.test(
+    String(value || "")
+  );
 }
 
 function ensureText(value, fallback) {
