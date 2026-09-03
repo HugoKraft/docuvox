@@ -85,22 +85,161 @@ module.exports = async function handler(request, response) {
       });
     }
 
+    if (isNearlyEmptyText(text)) {
+      return sendJson(response, 400, {
+        error: "KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.",
+        details: "Das Rohdiktat ist zu kurz für eine fachlich saubere Dokumentation.",
+      });
+    }
+
+    const redactedText = redactPiiFromTranscript(text);
+
     const documentation = await createDocumentation({
       apiKey,
-      text,
+      text: redactedText,
       patientLabel: `Patient ${patientNumber}`,
       patientNumber,
     });
 
     return sendJson(response, 200, { documentation });
   } catch (error) {
-    console.error("DocuVox AI processing failed:", error);
+    console.error("DocuVox AI processing failed:", {
+      name: error?.name || "Error",
+    });
     return sendJson(response, 500, {
       error: "KI-Verarbeitung fehlgeschlagen – bitte erneut versuchen.",
-      details: error.message || "OpenAI-Anfrage fehlgeschlagen.",
+      details: "OpenAI-Anfrage fehlgeschlagen.",
     });
   }
 };
+
+module.exports.redactPiiFromTranscript = redactPiiFromTranscript;
+
+function redactPiiFromTranscript(value) {
+  if (typeof value !== "string") {
+    throw new TypeError("Transcript must be a string");
+  }
+
+  let text = value;
+
+  text = text.replace(
+    /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+    "[EMAIL ENTFERNT]"
+  );
+
+  text = text.replace(
+    /\b(?:AHV(?:-?(?:Nummer|Nr\.))?\s*[:#-]?\s*)?756(?:[.\s-]?\d{4}){2}[.\s-]?\d{2}\b/gi,
+    "[AHV ENTFERNT]"
+  );
+
+  text = redactContextualReferenceNumbers(text);
+  text = redactAddresses(text);
+
+  text = text.replace(
+    /(?<!\d)(?:(?:\+|00)41(?:\s*\(0\))?[\s.-]*\d{2}|0(?:2[1-9]|3[1-4]|4[1-4]|5[1-8]|6[1-2]|7[5-9]|8[1-4]|9[1]))(?:[\s.-]*\d){7}(?!\d)/g,
+    "[TELEFON ENTFERNT]"
+  );
+
+  text = redactBirthDates(text);
+
+  text = text
+    .replace(
+      /\b(?:Alter\s*[:=]?\s*)\d{1,3}\b/gi,
+      "[ALTER ENTFERNT]"
+    )
+    .replace(
+      /\b\d{1,3}\s*(?:Jahre?(?:\s*alt)?|[-\s]?jährig(?:e|er|en|es)?)\b/gi,
+      "[ALTER ENTFERNT]"
+    )
+    .replace(
+      /\b((?:Patient|Patientin)\s+ist\s+)\d{1,3}\b(?!\s*(?:kg|m|cm|mm|Grad|°|Minuten?|Stunden?|Tage?|Wochen?|Wiederholungen?|Stufen?|Serien?))/gi,
+      "$1[ALTER ENTFERNT]"
+    );
+
+  text = text.replace(
+    /\b(?:Herr|Frau)\s+(?:(?:Dr\.?|Prof\.?)\s+)?[A-ZÄÖÜ][A-Za-zÄÖÜäöüß'’-]*(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß'’-]*)?\b/g,
+    "[NAME ENTFERNT]"
+  );
+
+  return text
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/\n[ \t]+/g, "\n")
+    .trim();
+}
+
+function redactContextualReferenceNumbers(text) {
+  const references = [
+    {
+      label: "PATIENTENNUMMER",
+      pattern: /\b(?:Patientennummer|Patienten(?:-|\s)?Nr\.?|Patienten(?:-|\s)?ID)\s*[:#-]?\s*[A-Z0-9][A-Z0-9./_-]{2,}\b/gi,
+    },
+    {
+      label: "AKTENNUMMER",
+      pattern: /\b(?:Aktennummer|Akten(?:-|\s)?Nr\.?)\s*[:#-]?\s*[A-Z0-9][A-Z0-9./_-]{2,}\b/gi,
+    },
+    {
+      label: "FALLNUMMER",
+      pattern: /\b(?:Fallnummer|Fall(?:-|\s)?Nr\.?|Fall(?:-|\s)?ID)\s*[:#-]?\s*[A-Z0-9][A-Z0-9./_-]{2,}\b/gi,
+    },
+    {
+      label: "DOSSIERNUMMER",
+      pattern: /\b(?:Dossiernummer|Dossier(?:-|\s)?Nr\.?)\s*[:#-]?\s*[A-Z0-9][A-Z0-9./_-]{2,}\b/gi,
+    },
+    {
+      label: "VERSICHERTENNUMMER",
+      pattern: /\b(?:Versichertennummer|Versicherten(?:-|\s)?Nr\.?|Versicherungsnummer|Versicherungs(?:-|\s)?Nr\.?|Policennummer|Policen(?:-|\s)?Nr\.?)\s*[:#-]?\s*[A-Z0-9][A-Z0-9./_-]{2,}\b/gi,
+    },
+  ];
+
+  return references.reduce(
+    (result, { label, pattern }) => result.replace(pattern, `[${label} ENTFERNT]`),
+    text
+  );
+}
+
+function redactAddresses(text) {
+  const streetName = String.raw`[A-ZÄÖÜ][A-Za-zÄÖÜäöüß'’-]*(?:[ -][A-ZÄÖÜ][A-Za-zÄÖÜäöüß'’-]*){0,2}`;
+  const streetType = String.raw`(?:straße|strasse|weg|gasse|platz)`;
+  const houseNumber = String.raw`\d{1,4}[a-zA-Z]?`;
+  const postalCity = String.raw`(?:\s*,?\s*\d{4}\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß'’.-]*(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß'’.-]*){0,2})?`;
+  const addressPattern = new RegExp(
+    String.raw`\b${streetName}${streetType}\s+${houseNumber}${postalCity}`,
+    "gi"
+  );
+
+  return text
+    .replace(
+      /\bAdresse\s*[:#-]?\s*[^,;\n.]{3,80}(?:,\s*\d{4}\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß'’.-]*(?:\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß'’.-]*){0,2})?/gi,
+      "[ADRESSE ENTFERNT]"
+    )
+    .replace(addressPattern, "[ADRESSE ENTFERNT]");
+}
+
+function redactBirthDates(text) {
+  const numericDate = /\b(?:0?[1-9]|[12]\d|3[01])[.\/-](?:0?[1-9]|1[0-2])[.\/-](?:19|20)\d{2}\b/g;
+  const writtenDate = /\b(?:0?[1-9]|[12]\d|3[01])\.?\s+(?:Januar|Februar|März|Maerz|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\s+(?:19|20)\d{2}\b/gi;
+
+  return text
+    .replace(numericDate, (match, offset, source) =>
+      shouldKeepClinicalDate(source, offset) ? match : "[GEBURTSDATUM ENTFERNT]"
+    )
+    .replace(writtenDate, (match, offset, source) =>
+      shouldKeepClinicalDate(source, offset) ? match : "[GEBURTSDATUM ENTFERNT]"
+    );
+}
+
+function shouldKeepClinicalDate(source, offset) {
+  const context = source.slice(Math.max(0, offset - 45), offset).toLowerCase();
+  const birthContext = /(?:geboren(?:\s+am)?|geburtsdatum|geburtsdaten|jahrgang)\s*[:#-]?\s*$/.test(
+    context
+  );
+  if (birthContext) return false;
+
+  return /(?:operation|op|behandlung|therapie|termin|kontrolle|untersuchung|unfall|eintritt|austritt)\s*(?:war|ist|am|vom|seit|:|-)?\s*$/.test(
+    context
+  );
+}
 
 async function createDocumentation({ apiKey, text, patientLabel, patientNumber }) {
   const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
@@ -221,6 +360,29 @@ function ensureText(value, fallback) {
   const clean = sanitizeSection(value);
   if (!clean || clean === "..." || clean.length < 4) return fallback;
   return /[.!?]$/.test(clean) ? clean : `${clean}.`;
+}
+
+function ensureBullets(value, fallback) {
+  const clean = sanitizeSection(value);
+  const source = !clean || clean === "..." || clean.length < 4 ? fallback : clean;
+  const lines = source
+    .split(/\n+/)
+    .map((line) => line.replace(/^[-•*]\s*/, "").trim())
+    .filter(Boolean);
+
+  if (lines.length) {
+    return lines.map((line) => `- ${ensureText(line, fallback)}`).join("\n");
+  }
+
+  return `- ${ensureText(source, fallback)}`;
+}
+
+function isNearlyEmptyText(text) {
+  const clean = String(text || "")
+    .replace(/[.,;:!?()\-[\]{}]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return clean.length < 8 || clean.split(" ").filter(Boolean).length < 2;
 }
 
 function hasCompleteSections(text) {
