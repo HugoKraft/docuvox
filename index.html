@@ -27,7 +27,27 @@
           <h1>DocuVox</h1>
           <p>KI-Diktate für Physiotherapie</p>
         </div>
+        <div class="user-state hidden" id="userState">
+          <span id="currentUserLabel"></span>
+          <button id="logoutButton" type="button">Abmelden</button>
+        </div>
       </header>
+
+      <section class="view login-view hidden" id="loginView">
+        <div class="login-card">
+          <p class="eyebrow">Login</p>
+          <h2>Bei DocuVox anmelden</h2>
+          <form id="loginForm" class="login-form">
+            <label class="field-label" for="loginEmail">E-Mail-Adresse</label>
+            <input id="loginEmail" type="email" autocomplete="email" placeholder="name@praxis.ch" required />
+            <label class="field-label" for="loginPassword">Passwort</label>
+            <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Passwort" required />
+            <button class="primary-button" type="submit">Einloggen</button>
+            <button class="secondary-button" id="createAccountButton" type="button">Konto erstellen</button>
+            <p class="login-message hidden" id="loginMessage" role="status" aria-live="polite"></p>
+          </form>
+        </div>
+      </section>
 
       <section class="view" id="startView">
         <div class="hero-card">
@@ -48,6 +68,7 @@
             <input id="patientCount" type="number" min="1" max="80" inputmode="numeric" placeholder="z. B. 13" required />
             <button class="primary-button" type="submit">Tagesliste erstellen</button>
           </form>
+          <button class="secondary-button wide-button hidden" id="restoreStartButton" type="button">Letzte Tagesliste wiederherstellen</button>
         </div>
       </section>
 
@@ -65,6 +86,7 @@
         </div>
         <div class="patient-grid" id="patientGrid"></div>
         <button class="secondary-button wide-button" id="showAllButton" type="button">Alle Dokumentationen anzeigen</button>
+        <button class="secondary-button wide-button hidden" id="restoreListButton" type="button">Letzte Tagesliste wiederherstellen</button>
         <button class="text-button" id="newDayButton" type="button">Neue Tagesliste erstellen</button>
       </section>
 

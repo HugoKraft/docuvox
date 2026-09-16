@@ -1,12 +1,18 @@
 const STORAGE_KEY = "docuvox-day-v3";
+const BACKUP_KEY = "docuvox-last-day-backup-v1";
+const SESSION_KEY = "docuvox-auth-session-v1";
+const USER_STATE_PREFIX = "docuvox_state_";
+const USER_BACKUP_PREFIX = "docuvox_backup_";
 
-let state = loadState();
+let currentUser = loadSessionUser();
+let state = createEmptyState();
 let currentPatientId = null;
 let recognition = null;
 let isRecording = false;
 let finalTranscript = "";
 
 const els = {
+  loginView: document.querySelector("#loginView"),
   startView: document.querySelector("#startView"),
   listView: document.querySelector("#listView"),
   detailView: document.querySelector("#detailView"),
@@ -40,14 +46,27 @@ const els = {
   newDayButton: document.querySelector("#newDayButton"),
   allDocsText: document.querySelector("#allDocsText"),
   toast: document.querySelector("#toast"),
+  loginForm: document.querySelector("#loginForm"),
+  loginEmail: document.querySelector("#loginEmail"),
+  loginPassword: document.querySelector("#loginPassword"),
+  createAccountButton: document.querySelector("#createAccountButton"),
+  loginMessage: document.querySelector("#loginMessage"),
+  userState: document.querySelector("#userState"),
+  currentUserLabel: document.querySelector("#currentUserLabel"),
+  logoutButton: document.querySelector("#logoutButton"),
+  restoreStartButton: document.querySelector("#restoreStartButton"),
+  restoreListButton: document.querySelector("#restoreListButton"),
 };
 
 bindEvents();
 initSpeech();
 registerServiceWorker();
-renderInitialView();
+bootApp();
 
 function bindEvents() {
+  els.loginForm.addEventListener("submit", handleLogin);
+  els.createAccountButton.addEventListener("click", createAccount);
+  els.logoutButton.addEventListener("click", logout);
   els.dayForm.addEventListener("submit", createDayList);
   document.querySelectorAll("[data-count]").forEach((button) => {
     button.addEventListener("click", () => pickCount(button));
@@ -63,8 +82,208 @@ function bindEvents() {
   els.showAllButton.addEventListener("click", showAllDocs);
   els.copyAllButton.addEventListener("click", copyAllDocs);
   els.copyAllTopButton.addEventListener("click", copyAllDocs);
-  els.newDayButton.addEventListener("click", resetDay);
+  els.newDayButton.addEventListener("click", confirmNewDay);
+  els.restoreStartButton.addEventListener("click", restoreLastDayBackup);
+  els.restoreListButton.addEventListener("click", restoreLastDayBackup);
   els.rawText.addEventListener("input", saveCurrentRawText);
+}
+
+async function bootApp() {
+  if (!currentUser) {
+    showLogin();
+    return;
+  }
+
+  state = loadState();
+  updateUserUi();
+
+  if (state.patients.length) {
+    renderList();
+    showView("list");
+    refreshCloudDocumentsInBackground();
+    return;
+  }
+
+  await refreshCloudDocuments();
+  renderInitialView();
+}
+
+function showLogin() {
+  currentUser = null;
+  currentPatientId = null;
+  state = createEmptyState();
+  localStorage.removeItem(SESSION_KEY);
+  updateUserUi();
+  showView("login");
+  window.setTimeout(() => els.loginEmail.focus(), 0);
+}
+
+async function handleLogin(event) {
+  event.preventDefault();
+  await authenticate("login");
+}
+
+async function createAccount() {
+  await authenticate("signup");
+}
+
+async function authenticate(action) {
+  const email = els.loginEmail.value.trim().toLowerCase();
+  const password = els.loginPassword.value;
+
+  if (!email || !password) {
+    showLoginMessage("Bitte E-Mail-Adresse und Passwort eingeben.", true);
+    return;
+  }
+
+  setAuthBusy(true);
+  showLoginMessage("");
+
+  try {
+    const result = await requestAuth(action, email, password);
+
+    if (result.requiresEmailConfirmation) {
+      els.loginPassword.value = "";
+      showLoginMessage(
+        result.message || "Bitte bestätigen Sie zuerst Ihre E-Mail-Adresse. Wir haben Ihnen eine Bestätigungsmail gesendet."
+      );
+      return;
+    }
+
+    if (!result.session?.userId || !result.session?.email) {
+      throw new Error("Session konnte nicht erstellt werden.");
+    }
+
+    currentUser = {
+      userId: result.session.userId,
+      email: result.session.email,
+      accessToken: result.session.accessToken || "",
+      refreshToken: result.session.refreshToken || "",
+      expiresAt: result.session.expiresAt || null,
+    };
+
+    localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+    state = loadState();
+    updateUserUi();
+    els.loginPassword.value = "";
+    showLoginMessage("");
+
+    if (state.patients.length) {
+      renderList();
+      showView("list");
+      refreshCloudDocumentsInBackground();
+      return;
+    }
+
+    await refreshCloudDocuments();
+    renderInitialView();
+  } catch (error) {
+    showLoginMessage(error.message || "Login fehlgeschlagen.", true);
+  } finally {
+    setAuthBusy(false);
+  }
+}
+
+function logout() {
+  if (isRecording) stopDictation(false);
+  saveState();
+  showLogin();
+}
+
+function updateUserUi() {
+  els.userState.classList.toggle("hidden", !currentUser);
+  els.currentUserLabel.textContent = currentUser ? currentUser.email : "";
+}
+
+function loadSessionUser() {
+  try {
+    const user = JSON.parse(localStorage.getItem(SESSION_KEY));
+    if (user?.userId && user?.email) return user;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function requestAuth(action, email, password) {
+  const response = await fetch("/api/auth", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ action, email, password }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || "Authentifizierung fehlgeschlagen.");
+  }
+
+  return data;
+}
+
+async function ensureFreshAccessToken() {
+  if (!currentUser?.accessToken) return false;
+
+  const refreshWindowMs = 60_000;
+  if (currentUser.expiresAt && Date.now() < currentUser.expiresAt - refreshWindowMs) {
+    return true;
+  }
+
+  if (!currentUser.refreshToken) return false;
+
+  try {
+    const response = await fetch("/api/auth", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "refresh",
+        refreshToken: currentUser.refreshToken,
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.session?.accessToken) {
+      throw new Error(data.error || "Session konnte nicht erneuert werden.");
+    }
+
+    currentUser = {
+      userId: data.session.userId,
+      email: data.session.email,
+      accessToken: data.session.accessToken || "",
+      refreshToken: data.session.refreshToken || currentUser.refreshToken,
+      expiresAt: data.session.expiresAt || null,
+    };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(currentUser));
+    return true;
+  } catch {
+    showLogin();
+    toast("Session abgelaufen. Bitte erneut einloggen.");
+    return false;
+  }
+}
+
+function setAuthBusy(active) {
+  els.loginForm.classList.toggle("is-busy", active);
+  els.loginForm.querySelectorAll("button, input").forEach((element) => {
+    element.disabled = active;
+  });
+}
+
+function showLoginMessage(message, isError = false) {
+  els.loginMessage.textContent = message;
+  els.loginMessage.classList.toggle("hidden", !message);
+  els.loginMessage.classList.toggle("is-error", isError);
+}
+
+function getStateStorageKey() {
+  return currentUser ? `${USER_STATE_PREFIX}${currentUser.userId}` : STORAGE_KEY;
+}
+
+function getBackupStorageKey() {
+  return currentUser ? `${USER_BACKUP_PREFIX}${currentUser.userId}` : BACKUP_KEY;
 }
 
 function initSpeech() {
@@ -119,7 +338,7 @@ function pickCount(button) {
   els.patientCount.value = button.dataset.count;
 }
 
-function createDayList(event) {
+async function createDayList(event) {
   event.preventDefault();
   const count = Number(els.patientCount.value);
 
@@ -128,33 +347,48 @@ function createDayList(event) {
     return;
   }
 
-  state = {
-    date: today(),
-    activePatientId: null,
-    patients: Array.from({ length: count }, (_, index) => ({
-      id: index + 1,
-      rawText: "",
-      documentation: "",
-      status: "open",
-    })),
-  };
-  currentPatientId = null;
-  saveState();
-  renderList();
-  showView("list");
+  if (!(await ensureFreshAccessToken())) return;
+
+  try {
+    const payload = await requestDayList({
+      method: "POST",
+      body: {
+        action: "create",
+        patientCount: count,
+      },
+    });
+    state = buildStateFromDayListPayload(payload, state);
+    currentPatientId = null;
+    saveState();
+    renderList();
+    showView("list");
+  } catch {
+    toast("Cloud nicht erreichbar. Keine neue Tagesliste erstellt.");
+  }
 }
 
 function resetDay() {
   if (isRecording) stopDictation(false);
+  saveLastDayBackup();
   state = createEmptyState();
   currentPatientId = null;
   els.patientCount.value = "";
   document.querySelectorAll("[data-count]").forEach((item) => item.classList.remove("active"));
   saveState();
+  updateBackupControls();
   showView("start");
 }
 
+function confirmNewDay() {
+  const confirmed = window.confirm(
+    "Neue Tagesliste starten?\n\nDie aktuelle Tagesliste wird als letzte Tagesliste gesichert und kann wiederhergestellt werden."
+  );
+  if (!confirmed) return;
+  resetDay();
+}
+
 function renderInitialView() {
+  updateBackupControls();
   if (state.patients.length) {
     renderList();
     showView("list");
@@ -292,6 +526,7 @@ async function createDocumentation() {
     els.nextPatientButton.classList.remove("hidden");
     updateNextButton();
     saveState();
+    await saveDocumentToCloud(patient);
     await copyText(documentation, "Dokumentation kopiert.");
   } catch (error) {
     showAiError(error.message);
@@ -416,20 +651,154 @@ function getAllDocsText() {
     .join("\n\n");
 }
 
+async function refreshCloudDocuments() {
+  if (!currentUser?.accessToken || isRecording) return;
+  if (!(await ensureFreshAccessToken())) return;
+
+  try {
+    const payload = await requestDayList({ method: "GET" });
+    state = buildStateFromDayListPayload(payload, state);
+    saveState();
+  } catch {
+    toast("Cloud nicht erreichbar. Lokaler Cache wird angezeigt.");
+  }
+}
+
+async function refreshCloudDocumentsInBackground() {
+  await refreshCloudDocuments();
+
+  if (!isRecording && !els.listView.classList.contains("hidden") && state.patients.length) {
+    renderList();
+  }
+}
+
+async function saveDocumentToCloud(patient) {
+  if (!currentUser?.accessToken || !patient?.documentation) return;
+  if (!(await ensureFreshAccessToken())) return;
+
+  if (!state.dayListId) {
+    toast("Cloud-Tagesliste fehlt. Dokumentation bleibt lokal gespeichert.");
+    return;
+  }
+
+  try {
+    const response = await fetch("/api/documents", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${currentUser.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        dayListId: state.dayListId,
+        patientNumber: patient.id,
+        content: patient.documentation,
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Cloud-Speicherung fehlgeschlagen.");
+  } catch {
+    toast("Cloud-Speicherung fehlgeschlagen. Dokumentation bleibt lokal gespeichert.");
+  }
+}
+
+async function requestDayList({ method, body = null }) {
+  const response = await fetch("/api/day-lists", {
+    method,
+    headers: {
+      Authorization: `Bearer ${currentUser.accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || "Tagesliste konnte nicht geladen werden.");
+  }
+
+  return payload;
+}
+
+function buildStateFromDayListPayload(payload, previousState = createEmptyState()) {
+  const dayList = payload?.dayList || null;
+  const backupAvailable = Boolean(payload?.backupAvailable);
+
+  if (!dayList) {
+    if (previousState?.patients?.length) {
+      return {
+        ...previousState,
+        backupAvailable,
+      };
+    }
+
+    currentPatientId = null;
+    return {
+      ...createEmptyState(),
+      backupAvailable,
+    };
+  }
+
+  const patientCount = Math.max(0, Number(dayList.patient_count) || 0);
+  const documents = Array.isArray(payload.documents) ? payload.documents : [];
+  const documentsByPatient = new Map();
+  documents.forEach((document) => {
+    const patientNumber = Number(document.patient_number);
+    if (!Number.isInteger(patientNumber) || patientNumber < 1 || !document.content) return;
+    documentsByPatient.set(patientNumber, document);
+  });
+
+  const sameDayList = previousState?.dayListId === dayList.id || previousState?.dayId === dayList.id;
+  const now = new Date().toISOString();
+  const patients = Array.from({ length: patientCount }, (_, index) => {
+    const id = index + 1;
+    const previousPatient = sameDayList
+      ? previousState.patients?.find((patient) => patient.id === id)
+      : null;
+    const cloudDocument = documentsByPatient.get(id);
+    const documentation = cloudDocument ? String(cloudDocument.content || "") : "";
+    const locallyActive = previousPatient?.status === "active" || previousState?.activePatientId === id;
+
+    return {
+      id,
+      rawText: previousPatient?.rawText || "",
+      documentation,
+      status: documentation ? "done" : locallyActive ? "active" : "open",
+    };
+  });
+
+  const activePatientStillExists = patients.some((patient) => patient.id === previousState?.activePatientId);
+  return {
+    date: dayList.date || today(),
+    dayId: dayList.id,
+    dayListId: dayList.id,
+    dayListStatus: dayList.status,
+    patientCount,
+    backupAvailable,
+    schemaVersion: dayList.schema_version || 1,
+    userId: currentUser?.userId || dayList.user_id || null,
+    updatedAt: dayList.updated_at || now,
+    activePatientId: activePatientStillExists ? previousState.activePatientId : null,
+    patients,
+  };
+}
+
 function getCurrentPatient() {
   return state.patients.find((patient) => patient.id === currentPatientId);
 }
 
 function showView(view) {
+  els.loginView.classList.toggle("hidden", view !== "login");
   els.startView.classList.toggle("hidden", view !== "start");
   els.listView.classList.toggle("hidden", view !== "list");
   els.detailView.classList.toggle("hidden", view !== "detail");
   els.allDocsView.classList.toggle("hidden", view !== "all");
+  updateBackupControls();
 }
 
 function loadState() {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    const saved = JSON.parse(localStorage.getItem(getStateStorageKey()));
     if (saved && Array.isArray(saved.patients)) return saved;
   } catch {
     return createEmptyState();
@@ -438,12 +807,82 @@ function loadState() {
 }
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  state = {
+    ...state,
+    userId: currentUser?.userId || null,
+    dayId: state.dayId || `${today()}-${currentUser?.userId || "local"}`,
+    updatedAt: new Date().toISOString(),
+  };
+  localStorage.setItem(getStateStorageKey(), JSON.stringify(state));
+}
+
+function saveLastDayBackup() {
+  if (!state.patients.length) return;
+  const backup = {
+    savedAt: new Date().toISOString(),
+    userId: currentUser?.userId || null,
+    state: {
+      ...state,
+      userId: currentUser?.userId || null,
+      updatedAt: new Date().toISOString(),
+    },
+  };
+  localStorage.setItem(getBackupStorageKey(), JSON.stringify(backup));
+}
+
+function loadLastDayBackup() {
+  try {
+    const backup = JSON.parse(localStorage.getItem(getBackupStorageKey()));
+    if (backup?.state && Array.isArray(backup.state.patients)) return backup;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function updateBackupControls() {
+  const hasBackup = currentUser ? Boolean(state.backupAvailable) : Boolean(loadLastDayBackup());
+  els.restoreStartButton.classList.toggle("hidden", !hasBackup);
+  els.restoreListButton.classList.toggle("hidden", !hasBackup);
+}
+
+async function restoreLastDayBackup() {
+  const confirmed = window.confirm("Letzte Tagesliste wiederherstellen?\n\nDie aktuelle Tagesliste wird dadurch ersetzt.");
+  if (!confirmed) return;
+
+  if (isRecording) stopDictation(false);
+  if (!(await ensureFreshAccessToken())) return;
+
+  try {
+    const payload = await requestDayList({
+      method: "POST",
+      body: {
+        action: "restoreBackup",
+      },
+    });
+    state = buildStateFromDayListPayload(payload, state);
+    currentPatientId = null;
+    saveState();
+    renderList();
+    showView("list");
+    toast("Letzte Tagesliste wiederhergestellt.");
+  } catch (error) {
+    toast(error.message || "Keine gesicherte Tagesliste vorhanden.");
+    updateBackupControls();
+  }
 }
 
 function createEmptyState() {
   return {
     date: today(),
+    dayId: `${today()}-${currentUser?.userId || "local"}`,
+    dayListId: null,
+    dayListStatus: null,
+    patientCount: 0,
+    backupAvailable: false,
+    schemaVersion: 1,
+    userId: currentUser?.userId || null,
+    updatedAt: new Date().toISOString(),
     activePatientId: null,
     patients: [],
   };

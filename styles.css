@@ -60,6 +60,25 @@ button:disabled {
   margin-bottom: 22px;
 }
 
+.user-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.user-state button {
+  min-height: 38px;
+  padding: 0 12px;
+  color: var(--blue-900);
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-weight: 750;
+}
+
 .brand-mark {
   display: grid;
   place-items: center;
@@ -133,6 +152,35 @@ h2 {
   gap: 22px;
   max-width: 620px;
   margin: 6vh auto;
+}
+
+.login-card {
+  display: grid;
+  gap: 18px;
+  width: min(100%, 460px);
+  margin: 6vh auto;
+}
+
+.login-form {
+  display: grid;
+  gap: 12px;
+}
+
+.login-form .field-label {
+  margin-bottom: -4px;
+}
+
+.login-message {
+  color: var(--success);
+  line-height: 1.45;
+}
+
+.login-message.is-error {
+  color: var(--danger);
+}
+
+.login-form.is-busy {
+  opacity: 0.75;
 }
 
 .day-form {
@@ -589,6 +637,15 @@ textarea:focus {
   .app {
     min-height: 100vh;
     padding: calc(14px + env(safe-area-inset-top)) 14px calc(18px + env(safe-area-inset-bottom));
+  }
+
+  .app-header {
+    flex-wrap: wrap;
+  }
+
+  .user-state {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .section-top {
