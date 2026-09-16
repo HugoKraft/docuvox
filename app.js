@@ -515,9 +515,11 @@ async function createDocumentation() {
 
   try {
     const documentation = await createAiDocumentation(rawText, `Patient ${patient.id}`);
-    patient.rawText = rawText;
+    patient.rawText = "";
     patient.documentation = documentation;
     patient.status = "done";
+    finalTranscript = "";
+    els.rawText.value = "";
     els.finalDoc.value = documentation;
     showDictationSuccess();
     els.aiState.textContent = "KI aktiv";
@@ -797,9 +799,20 @@ function showView(view) {
 }
 
 function loadState() {
+  loadLastDayBackup();
+
   try {
-    const saved = JSON.parse(localStorage.getItem(getStateStorageKey()));
-    if (saved && Array.isArray(saved.patients)) return saved;
+    const storageKey = getStateStorageKey();
+    const saved = JSON.parse(localStorage.getItem(storageKey));
+    const persistableState = createPersistableState(saved);
+
+    if (hasPersistedRawText(saved)) {
+      localStorage.setItem(storageKey, JSON.stringify(persistableState));
+    }
+
+    if (persistableState && Array.isArray(persistableState.patients)) {
+      return createRuntimeState(persistableState);
+    }
   } catch {
     return createEmptyState();
   }
@@ -813,7 +826,7 @@ function saveState() {
     dayId: state.dayId || `${today()}-${currentUser?.userId || "local"}`,
     updatedAt: new Date().toISOString(),
   };
-  localStorage.setItem(getStateStorageKey(), JSON.stringify(state));
+  localStorage.setItem(getStateStorageKey(), JSON.stringify(createPersistableState(state)));
 }
 
 function saveLastDayBackup() {
@@ -827,17 +840,65 @@ function saveLastDayBackup() {
       updatedAt: new Date().toISOString(),
     },
   };
-  localStorage.setItem(getBackupStorageKey(), JSON.stringify(backup));
+  localStorage.setItem(getBackupStorageKey(), JSON.stringify(createPersistableState(backup)));
 }
 
 function loadLastDayBackup() {
   try {
-    const backup = JSON.parse(localStorage.getItem(getBackupStorageKey()));
-    if (backup?.state && Array.isArray(backup.state.patients)) return backup;
+    const storageKey = getBackupStorageKey();
+    const backup = JSON.parse(localStorage.getItem(storageKey));
+    const persistableBackup = createPersistableState(backup);
+
+    if (hasPersistedRawText(backup)) {
+      localStorage.setItem(storageKey, JSON.stringify(persistableBackup));
+    }
+
+    if (persistableBackup?.state && Array.isArray(persistableBackup.state.patients)) {
+      return {
+        ...persistableBackup,
+        state: createRuntimeState(persistableBackup.state),
+      };
+    }
   } catch {
     return null;
   }
   return null;
+}
+
+function createPersistableState(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => createPersistableState(item));
+  }
+
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== "rawText")
+      .map(([key, item]) => [key, createPersistableState(item)])
+  );
+}
+
+function createRuntimeState(persistedState) {
+  const runtimeState = createPersistableState(persistedState);
+
+  return {
+    ...runtimeState,
+    patients: Array.isArray(runtimeState?.patients)
+      ? runtimeState.patients.map((patient) => ({
+          ...patient,
+          rawText: "",
+        }))
+      : [],
+  };
+}
+
+function hasPersistedRawText(value, seen = new WeakSet()) {
+  if (!value || typeof value !== "object" || seen.has(value)) return false;
+  seen.add(value);
+
+  if (Object.prototype.hasOwnProperty.call(value, "rawText")) return true;
+  return Object.values(value).some((item) => hasPersistedRawText(item, seen));
 }
 
 function updateBackupControls() {
