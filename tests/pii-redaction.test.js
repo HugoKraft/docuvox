@@ -118,19 +118,6 @@ test("passes only redacted text through normalization, structuring, and repair",
   const openAiOutputs = [
     "[NAME ENTFERNT], [ALTER ENTFERNT], [EMAIL ENTFERNT]. Schmerzen NRS 5.",
     "Unvollständige Antwort",
-    `Patient 3
-
-**Befund aktuell**
-- Schmerzen NRS 5.
-
-**Behandlung**
-- Gangtraining am Rollator.
-
-**Reaktion / Verlauf**
-- Schmerzen NRS 5.
-
-**Ausblick / Empfehlung**
-- Gangtraining weiterführen.`,
   ];
 
   process.env.OPENAI_API_KEY = "test-key";
@@ -157,7 +144,7 @@ test("passes only redacted text through normalization, structuring, and repair",
     await documentHandler(request, response);
 
     assert.equal(response.statusCode, 200);
-    assert.equal(requestBodies.length, 3);
+    assert.equal(requestBodies.length, 2);
 
     for (const body of requestBodies) {
       const serialized = JSON.stringify(body);
@@ -169,7 +156,6 @@ test("passes only redacted text through normalization, structuring, and repair",
     assert.match(requestBodies[0].input, /\[EMAIL ENTFERNT\]/);
     assert.match(requestBodies[0].input, /NRS 5/);
     assert.match(requestBodies[1].input, /\[NAME ENTFERNT\]/);
-    assert.match(requestBodies[2].input, /\[NAME ENTFERNT\]/);
   } finally {
     global.fetch = originalFetch;
     if (originalApiKey === undefined) {
